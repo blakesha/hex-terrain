@@ -12,6 +12,7 @@ import numpy as np
 import trimesh
 from manifold3d import Manifold, CrossSection, Mesh, OpType
 from scipy.interpolate import RegularGridInterpolator
+from scipy.ndimage import gaussian_filter1d, gaussian_filter
 
 DEG = np.pi / 180.0
 
@@ -183,12 +184,14 @@ class PathNet:
                 nrm = np.stack([-tang[:, 1], tang[:, 0]], 1)
                 ph = rng.uniform(0, 2 * np.pi, 4)
                 wig = (2.3 * np.sin(2 * np.pi * s / rng.uniform(15, 22) + ph[0])
-                       + 0.7 * np.sin(2 * np.pi * s / rng.uniform(7.0, 10.0) + ph[1]))
+                       + 0.4 * np.sin(2 * np.pi * s / rng.uniform(8.0, 11.0) + ph[1]))
                 hd = hexdist(dense[:, 0], dense[:, 1])
                 taper = smoothstep((a - hd - 1.0) / 8.0)
                 if center_fixed or len(exits) == 1:        # junctions and dead ends stay put
                     taper = taper * smoothstep(np.hypot(*(dense - poly[-1]).T) / 6.0)
                 dense = dense + (organic * wig * taper)[:, None] * nrm
+                # round off any tight kinks (keeps the radial run-in at the edge: it is straight anyway)
+                dense = gaussian_filter1d(dense, sigma=2.2 / 0.4, axis=0, mode='nearest')
                 wsc = 1.0 + wamp * (0.65 * np.sin(2 * np.pi * s / rng.uniform(8, 13) + ph[2])
                                     + 0.35 * np.sin(2 * np.pi * s / rng.uniform(4, 6) + ph[3])) * taper
             else:

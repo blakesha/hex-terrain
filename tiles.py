@@ -4,6 +4,7 @@ tiles.py - terrain, roads/rivers, feature structures and the tile builder.
 import numpy as np
 import trimesh
 from scipy.interpolate import RegularGridInterpolator
+from scipy.ndimage import gaussian_filter
 from manifold3d import Manifold, CrossSection
 
 from hexlib import *
@@ -455,6 +456,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     Z = p.base + level + h
     if c.road is not None:
         d, _ = c.road.query(c.X, c.Y)
+        d = gaussian_filter(d, 0.9 / p.res, mode='nearest')      # no creases on inner bends
         if feature == 'dungeon':      # approach cut only in front of the facade
             flat = 1 - smoothstep((c.X - (XF + 1.0)) / 1.0) * (1 - smoothstep((np.abs(c.Y) - 4.2) / 2.0))
         else:
@@ -465,6 +467,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         rm = 0.0
     if c.river is not None:
         d, _ = c.river.query(c.X, c.Y)
+        d = gaussian_filter(d, 0.9 / p.res, mode='nearest')      # no creases on inner bends
         hw = p.river_w / 2
         valley = smoothstep((d - hw) / 7.0)
         Z = p.base + level + (Z - p.base - level) * valley
