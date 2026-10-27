@@ -43,8 +43,12 @@ for the other hand.
 
 **Meandering paths.** Rivers and roads wander, and rivers also swell and narrow. The meander fades
 to nothing at every edge, so each path still leaves the tile at the edge midpoint, perpendicular,
-with the standard width, and any tile still joins any other. Bridge, ford and the walled or
-fortified feature tiles keep straight paths so decks and gates line up; villages meander gently.
+with the standard width, and any tile still joins any other. The walled and fortified feature tiles keep
+straight paths so gates line up; villages meander gently. The bridge and ford tiles use exactly the same
+river as `river_straight_plains` (same seed and terrain) with a straight road laid across it, and the bridge
+deck is placed where the road meets the river.
+
+![River, bridge and ford](previews/bridge_ford.png)
 `--organic 0` gives the old geometric paths, `--organic 1.5` wilder ones.
 
 **Water.** The `water` tile sits 1 mm below the land, exactly the river floor level, so rivers

@@ -60,8 +60,8 @@ def catalogue():
             cat[f'road_{pat}_{t}'] = dict(terrain=t, road=ex, seed=3)
         for t in ('plains', 'hills', 'forest'):
             cat[f'river_{pat}_{t}'] = dict(terrain=t, river=ex, seed=4)
-    cat['bridge_plains'] = dict(terrain='plains', river=[0, 3], road=[1, 4], bridge=True, seed=5)
-    cat['ford_plains'] = dict(terrain='plains', river=[0, 3], road=[1, 4], ford=True, seed=5)
+    cat['bridge_plains'] = dict(terrain='plains', river=[0, 3], road=[1, 4], bridge=True, seed=4)   # same river as river_straight_plains
+    cat['ford_plains'] = dict(terrain='plains', river=[0, 3], road=[1, 4], ford=True, seed=4)      # same river as river_straight_plains
     cat['village_0'] = dict(terrain='plains', feature='village', seed=11)
     cat['village_1'] = dict(terrain='plains', feature='village', road=[0], seed=11)
     cat['village_2'] = dict(terrain='plains', feature='village', road=[0, 3], seed=12)

@@ -412,12 +412,26 @@ FEATURES = {
 # bridge deck
 # ==========================================================================
 def bridge_parts(c, road_ang_deg):
+    """Deck and parapets where the (straight) road crosses the (meandering) river:
+    centred on the point where the river centreline meets the road line."""
     p = c.p
-    z = c.p.base + c.ground(0, 0) * 0       # level is base
+    th = np.radians(road_ang_deg)
+    u = np.array([np.cos(th), np.sin(th)])                 # along the road
+    n = np.array([-np.sin(th), np.cos(th)])                # across it
+    q = np.zeros(2)
+    best = 1e9
+    for poly in c.river.polys:
+        s = poly @ n
+        for i in np.where(s[:-1] * s[1:] <= 0)[0]:         # river centreline crosses the road line
+            f = s[i] / (s[i] - s[i + 1] + 1e-12)
+            pt = poly[i] + f * (poly[i + 1] - poly[i])
+            if np.hypot(*pt) < best:
+                best, q = np.hypot(*pt), pt
     top = p.base + p.road_h
-    deck = box(0, 0, top - 0.8, 12.0, p.road_w, 0.8)
-    rail = box(0, p.road_w / 2 - 0.3, top, 12.0, 0.6, 0.7) + box(0, -p.road_w / 2 + 0.3, top, 12.0, 0.6, 0.7)
-    return [(deck + rail).rotate([0, 0, road_ang_deg])]
+    L = 14.0
+    deck = box(0, 0, top - 0.8, L, p.road_w, 0.8)
+    rail = box(0, p.road_w / 2 - 0.3, top, L, 0.6, 0.7) + box(0, -p.road_w / 2 + 0.3, top, L, 0.6, 0.7)
+    return [(deck + rail).rotate([0, 0, road_ang_deg]).translate([q[0], q[1], 0])]
 
 
 # ==========================================================================
@@ -430,9 +444,11 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     c.exits = list(road or [])
     c.fort_flags = ('gate',) if feature == 'fort' else ()
 
-    # rigid geometry where a deck / walls / gates have to line up with the path
-    rigid = bridge or ford or feature in ('city', 'fort', 'temple', 'ziggurat', 'dungeon')
+    # rigid geometry where walls / gates have to line up with the path; the road on a bridge or
+    # ford tile is straight, but its river is the same meandering river as the plain river tile
+    rigid = feature in ('city', 'fort', 'temple', 'ziggurat', 'dungeon')
     org = 0.0 if rigid else p.organic * (0.5 if feature == 'village' else 1.0)
+    org_road = 0.0 if (bridge or ford) else org
     level = 0.0
     h, level = TERRAINS[terrain](c)
     h = np.asarray(h, float)
@@ -448,7 +464,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
             c.road = PathNet([[np.array([e, 0.0]), np.array([XF + 1.5, 0.0])]])
         else:
             c.road = PathNet.from_exits(road, p.a, rng=np.random.RandomState(seed + 101),
-                                        organic=0.6 * org, wamp=0.10)
+                                        organic=0.6 * org_road, wamp=0.10)
     if river:
         c.river = PathNet.from_exits(river, p.a, rng=np.random.RandomState(seed + 202),
                                      organic=org, wamp=0.22)
