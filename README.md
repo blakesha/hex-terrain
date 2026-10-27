@@ -8,14 +8,14 @@ tiles at every angle, so you can lay out a map on the table and rebuild it any w
 
 ![Sample tiles](previews/overview.png)
 
-The repository holds the generator, not the STL files. Run it once and you get 109 ready-to-slice
+The repository holds the generator, not the STL files. Run it once and you get 173 ready-to-slice
 STLs in about 30 seconds.
 
 ## Quick start
 
 ```
 pip install numpy scipy trimesh manifold3d pillow
-python3 generate.py --set all          # writes 109 STLs to ./stl
+python3 generate.py --set all          # writes 173 STLs to ./stl
 python3 validate.py stl                # printability report
 python3 preview.py sheet.png stl/*.stl --cols 4
 ```
@@ -35,13 +35,18 @@ Requires Python 3.9+. No GPU or CAD program is needed; previews are software-ren
 | Villages | no road, road ends, road passes through |
 | Walled cities | one, two (opposite) or three gates |
 | Other features | fort, classical temple, ziggurat, dungeon entrance cut into a hill (each with and without a road where it makes sense) |
+| Ruins, mine, stones, tower | `ruins_*` (broken walls, columns, an arch), `mine_1` (timber-framed adit, ore cart, spoil heap), `stones_*` (stone circle with trilithon and altar), `watchtower_*` (tower on a walled mound) |
+| Harbours | `harbour_0/1`: a coast tile with quay, stone jetty, bollards, moored boats and houses |
+| Coast styles | `cliff_coast_N_*` (steep plateau edge, plus a river-mouth variant), `sand_coast_N` (desert beach), `marsh_coast_N` (swamp shore) |
+| Islands | `island_plains/hills/forest` and `island_lighthouse`: land in the middle, water on every edge |
+| Mountains | `waterfall_mountains` (stepped stream down a flank into the river), `pass_*_mountains` (roads through the peaks), `gorge_*_mountains` (rivers) |
+| Mirrored forks | `road_fork_t_*_mirror` and `river_fork_t_*_mirror`, the other hand |
 
 Name pattern: `road_curve_gentle_forest`, `river_fork_y_hills`, `village_2`, `city_3` and so on.
 The number on features is how many road exits the tile has.
 
 Roads and rivers are listed by the edges they use; print one and rotate it. Six rotations
-cover everything, fewer for symmetric tiles. `fork_t` is one-handed, so mirror it in your slicer
-for the other hand.
+cover everything, fewer for symmetric tiles. `fork_t` is one-handed; the `_mirror` tiles are the other hand.
 
 **Meandering paths.** Rivers and roads wander, and rivers also swell and narrow. The meander fades
 to nothing at every edge, so each path still leaves the tile at the edge midpoint, perpendicular,
@@ -59,6 +64,10 @@ flow straight into lakes. Its surface carries a wavy crest pattern that runs rig
 tile and tiles the hex lattice, so it continues unbroken across shared edges.
 
 ![Four water tiles joined](previews/water_seamless.png)
+
+![Ruins, mine, stones, watchtower, harbour, lighthouse](previews/features2.png)
+![Coast styles and islands](previews/coast_styles.png)
+![Waterfall, passes and gorges](previews/mountains2.png)
 
 ![Roads](previews/roads.png)
 ![Rivers and bridge](previews/rivers.png)
@@ -142,6 +151,8 @@ Pockets sit below the lowest surface at every edge, so rivers never break into t
 | `generate.py` | tile catalogue and command line; writes STLs |
 | `tiles.py` | terrain functions, features (village, city, fort, temples, dungeon), the tile builder |
 | `hexlib.py` | noise, hex geometry, path networks, heightfield-to-solid, tree and roof primitives |
+| `plate.py` | packs tiles on a hex lattice for your bed: `python3 plate.py "stl/road_*_plains.stl" --bed 256 256 --gap 3` writes `plates/plate_01.stl` and a listing |
+| `multicolour.py` | splits tiles at a height for snow caps: `python3 multicolour.py stl/mountains.stl --z 14` writes `_body` and `_cap` STLs |
 | `validate.py` | watertight, single-body and overhang report for a folder of STLs |
 | `preview.py` | software-rendered contact sheets |
 | `previews/` | example renders |
@@ -168,15 +179,13 @@ there; to add a new feature, write a function in `tiles.py` and register it in `
   more empty space rather than bigger buildings
 - Roads over mountains and swamp, and rivers over desert, mountains and swamp, are not in the default set
   (the generator supports them)
-- No waterfall or mountain-pass tiles yet
+- The waterfall is a stepped channel (about 1.4 mm steps) rather than a sheer drop; paint or use clear filament for the water
 - Coasts come in one orientation per shape (water on the first N edges); rotate the print. The shoreline of
   a mirrored coast is not generated, so a `coast_2` or `coast_3` is the same handedness everywhere
 - Not every tile has been test-printed; the meshes pass the geometric checks above
 
 ## Ideas
 
-- Waterfalls and mountain passes
-- Cliff and harbour coasts, islands, reeds and sand
-- Ruins, mines, harbours, standing stones, watchtowers
-- A snow-cap or separate-colour option for multi-material printers
-- Hex-grid layout helper that writes a plate arrangement for your bed size
+- Mirrored coasts, so both handedness of shore are available
+- Harbours on other coast shapes, and more mountain features (passes with bridges)
+- Per-tile colour splits beyond snow caps (water, roads)

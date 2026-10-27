@@ -406,6 +406,230 @@ def f_dungeon(c):
     return parts
 
 
+
+# ==========================================================================
+# harbour (coast tile, water on edges 0-2, quay and pier along the 60-degree axis)
+# ==========================================================================
+def harbour_axis(c):
+    """unit vector toward the sea and the distance from the centre at which that axis meets the shore"""
+    u = np.array([np.cos(60 * DEG), np.sin(60 * DEG)])
+    rs = np.linspace(-14, 14, 561)
+    ss = np.array([c.s_at(*(u * r)) for r in rs])
+    idx = np.where(ss[:-1] * ss[1:] <= 0)[0]
+    return u, (rs[idx[0]] if len(idx) else 0.0)
+
+
+def boat(rng, x, y, z, ang):
+    hull = np.array([[-2.0, -0.7], [1.0, -0.85], [2.4, 0.0], [1.0, 0.85], [-2.0, 0.7]])
+    m = Manifold.extrude(CrossSection([hull]), 1.3).translate([0, 0, z])
+    m = m + box(-0.7, 0, z + 1.25, 1.5, 1.0, 0.75)
+    return m.rotate([0, 0, ang]).translate([x, y, 0])
+
+
+def f_harbour(c):
+    p, rng = c.p, c.rng
+    u, r0 = harbour_axis(c)
+    tv = np.array([-u[1], u[0]])
+    ang = 60.0
+    top, zlow = p.base + 0.9, p.base - 1.6
+    parts = []
+    q = u * (r0 - 0.3)
+    parts.append(box(q[0], q[1], zlow, 3.8, 11.0, top - zlow, ang))                  # quay
+    jet = u * (r0 + 5.5)
+    parts.append(box(jet[0], jet[1], zlow, 9.0, 2.2, top - zlow, ang))               # stone jetty
+    for off in (-4.0, 0.0, 4.0):                                                       # bollards
+        b = q - u * 1.2 + tv * off
+        parts.append(cyl(b[0], b[1], top - 0.1, 0.45, 0.9, seg=10))
+    for side in (-1, 1):                                                               # boats moored in the water
+        pos = u * (r0 + 5.0) + tv * side * rng.uniform(4.0, 5.0)
+        if c.s_at(*pos) < -2.5:
+            parts.append(boat(rng, pos[0], pos[1], p.base - 1.1, ang + rng.uniform(-12, 12) + (0 if side > 0 else 0)))
+    c.claim(q[0], q[1], 6.8)
+    parts += pack_houses(c, 6, radius=15.0, extra_free=lambda x, y: c.s_at(x, y) > 4.0)
+    parts += scatter_trees(c, 5, p_conifer=0.3, rmin=1.4, rmax=2.2)
+    return parts
+
+
+# ==========================================================================
+# island lighthouse (water tile with an island in the middle)
+# ==========================================================================
+def f_lighthouse(c):
+    z = c.ground(0, 0)
+    zl = c.p.base - 0.5
+    parts = [Manifold.cylinder(z + 10.2 - zl, 2.3, 1.5, 24).translate([0, 0, zl])]            # tapered tower
+    parts.append(Manifold.extrude(CrossSection([np.array([[np.cos(a) * 1.7, np.sin(a) * 1.7] for a in np.linspace(0, 2 * np.pi, 20, endpoint=False)])]),
+                                  0.9, 0, 0.0, (1.35, 1.35)).translate([0, 0, z + 9.9]))     # chamfered gallery
+    parts.append(cyl(0, 0, z + 10.7, 1.0, 1.7, seg=16))                                      # lamp room
+    parts.append(cyl(0, 0, z + 12.35, 1.35, 1.5, r2=0.05, seg=16))                           # cap
+    parts.append(house(3.8, 2.4, c.ground(3.8, 2.4), 3.0, 2.4, 1.9, 1.4, 25.0))              # keeper's cottage
+    c.claim(0, 0, 3.0); c.claim(3.8, 2.4, 2.6)
+    return parts
+
+
+# ==========================================================================
+# ruins
+# ==========================================================================
+def _broken(rng, m, x, y, z_top, length, thick, ang):
+    """take a few bites out of the top of a wall piece so it looks collapsed"""
+    for _ in range(rng.randint(1, 3)):
+        s = rng.uniform(-length / 2 + 0.4, length / 2 - 0.4)
+        bite = box(s, 0, z_top - rng.uniform(0.5, 1.2), rng.uniform(0.8, 1.6), thick + 0.4, 3.0)
+        m = m - bite
+    return m
+
+
+def f_ruins(c):
+    rng, p = c.rng, c.p
+    z0 = c.ground(0, 0)
+    zl = p.base - 0.5
+    parts = []
+    W, D = 11.0, 8.0
+    sides = [((-W / 2, -D / 2), (W / 2, -D / 2)), ((W / 2, -D / 2), (W / 2, D / 2)),
+             ((W / 2, D / 2), (-W / 2, D / 2)), ((-W / 2, D / 2), (-W / 2, -D / 2))]
+    for (x0, y0), (x1, y1) in sides:
+        L = np.hypot(x1 - x0, y1 - y0)
+        ang = np.degrees(np.arctan2(y1 - y0, x1 - x0))
+        cuts = np.sort(rng.uniform(0.2, 0.8, rng.randint(1, 3)))
+        edges = np.concatenate([[0.0], cuts, [1.0]])
+        for a, b in zip(edges[:-1], edges[1:]):
+            if rng.rand() < 0.25:
+                continue                                   # a missing stretch of wall
+            seg = (b - a) * L - 0.9
+            if seg < 1.0:
+                continue
+            tm = (a + b) / 2
+            cx, cy = x0 + (x1 - x0) * tm, y0 + (y1 - y0) * tm
+            top = z0 + rng.uniform(1.4, 4.6)
+            w = box(0, 0, zl, seg, 1.0, top - zl)
+            w = _broken(rng, w, 0, 0, top - zl + zl, seg, 1.0, 0) if False else w
+            for _ in range(rng.randint(1, 3)):             # collapsed crown
+                s = rng.uniform(-seg / 2 + 0.4, seg / 2 - 0.4)
+                w = w - box(s, 0, top - rng.uniform(0.5, 1.1), rng.uniform(0.8, 1.6), 1.4, 3.0)
+            parts.append(w.rotate([0, 0, ang]).translate([cx, cy, 0]))
+    for (x, y) in ((-3.4, -1.0), (2.6, 1.6), (4.2, -2.4)):                           # column stubs
+        h = rng.uniform(2.0, 4.8)
+        col = cyl(0, 0, zl, 0.62, z0 + h - zl, seg=12)
+        col = col - box(0.3, 0, z0 + h - 0.4, 2.4, 2.4, 1.0).rotate([0, rng.uniform(15, 35), 0])
+        parts.append(col.translate([x, y, 0]))
+    ax, ay = 0.0, D / 2 + 3.0                                                            # a free-standing arch
+    parts.append(box(ax - 2.0, ay, zl, 1.1, 1.1, z0 + 5.2 - zl))
+    parts.append(box(ax + 2.0, ay, zl, 1.1, 1.1, z0 + 5.2 - zl))
+    parts.append(box(ax, ay, z0 + 4.7, 5.4, 1.1, 1.0))
+    group = union(parts).rotate([0, 0, rng.uniform(-25, 25)])
+    out = [group]
+    c.claim(0, 0, 8.6); c.claim(0, D / 2 + 3.0, 3.6)
+    for _ in range(9):
+        a = rng.uniform(0, 2 * np.pi); r = rng.uniform(1.0, 8.0)
+        x, y = r * np.cos(a), r * np.sin(a)
+        out.append(rock(rng, x, y, c.ground(x, y) - 0.1, rng.uniform(0.5, 1.0)))
+    return out
+
+
+# ==========================================================================
+# mine entrance (re-uses the dungeon hill, faces edge 0)
+# ==========================================================================
+def f_mine(c):
+    p, rng = c.p, c.rng
+    zl = p.base - 0.5
+    floor = p.base + p.road_h
+    parts = []
+    xf = XF + 1.7                                                  # the cut face made by the approach clearing
+    w, hsq = 3.4, 3.0
+    c.carve = box(XF - 2.5, 0, floor, 9.5, w, hsq)                  # square adit into the hill
+    for s in (-1, 1):                                              # timber frame
+        parts.append(box(xf, s * (w / 2 + 0.25), zl, 0.9, 0.9, floor + hsq + 0.3 - zl))
+    parts.append(box(xf, 0, floor + hsq, 0.9, w + 1.4, 0.8))
+    for k in range(3):                                             # braces along the tunnel roof
+        parts.append(box(xf - 1.6 - 1.7 * k, 0, floor + hsq - 0.5, 0.6, w + 0.2, 0.5))
+    parts.append(box(xf + 2.2, 0.15, floor - 0.1, 1.4, 0.95, 0.65))                       # ore cart
+    parts.append(cyl(xf + 2.2 - 0.45, 0.15 - 0.55, floor - 0.1, 0.32, 0.12, seg=10))
+    parts.append(cyl(xf + 2.2 + 0.45, 0.15 + 0.55, floor - 0.1, 0.32, 0.12, seg=10))
+    for _ in range(8):                                             # spoil heap
+        x, y = rng.uniform(XF + 3.0, XF + 7.0), rng.uniform(4.2, 8.0)
+        if c.free(x, y, 0.9, gap=-0.5):
+            parts.append(rock(rng, x, y, c.ground(x, y) - 0.2, rng.uniform(0.7, 1.4)))
+            c.claim(x, y, 0.9)
+    hx, hy = XF + 4.5, -7.2
+    if c.free(hx, hy, 2.6):
+        parts.append(house(hx, hy, c.ground(hx, hy), 3.6, 2.6, 2.1, 1.5, 12.0))
+        c.claim(hx, hy, 2.6)
+    parts += scatter_trees(c, 5, p_conifer=0.7, rmin=1.3, rmax=2.0, area=17)
+    return parts
+
+
+# ==========================================================================
+# standing stones
+# ==========================================================================
+def h_stones(c):
+    d = np.hypot(c.X, c.Y)
+    return 1.0 * smoothstep((10.5 - d) / 4.0)
+
+
+def _stone(rng, x, y, z, w, d, h, ang, taper=0.62):
+    poly = np.array([[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]])
+    m = Manifold.extrude(CrossSection([poly]), h, 0, 0.0, (taper, taper + 0.08))
+    return m.rotate([0, 0, ang]).translate([x, y, z])
+
+
+def f_stones(c):
+    rng = c.rng
+    parts, R = [], 7.2
+    n = 9
+    for k in range(n):
+        a = 2 * np.pi * k / n + rng.uniform(-0.08, 0.08)
+        x, y = R * np.cos(a), R * np.sin(a)
+        if c.road is not None:
+            d, _ = c.road.query(np.array([x]), np.array([y]))
+            if d[0] < 3.2:
+                continue                                     # leave the road a gap through the ring
+        parts.append(_stone(rng, x, y, c.ground(x, y) - 0.6, rng.uniform(1.5, 2.0), rng.uniform(0.9, 1.2),
+                            rng.uniform(4.2, 6.2), np.degrees(a) + 90 + rng.uniform(-6, 6)))
+    zc = c.ground(0, 0) - 0.6                                  # central trilithon and altar
+    parts.append(_stone(rng, -1.7, 0, zc, 1.5, 1.1, 6.4, 90))
+    parts.append(_stone(rng, 1.7, 0, zc, 1.5, 1.1, 6.4, 90))
+    parts.append(box(0, 0, zc + 6.0, 4.8, 1.3, 1.0))
+    parts.append(box(0, -3.0, c.ground(0, -3.0) - 0.6, 2.4, 1.3, 1.5))
+    c.claim(0, 0, 9.6)
+    parts += scatter_trees(c, 7, p_conifer=0.4, rmin=1.4, rmax=2.3)
+    return parts
+
+
+# ==========================================================================
+# watchtower on a mound inside a low wall (gate faces edge 0)
+# ==========================================================================
+def h_watch(c):
+    d = np.hypot(c.X, c.Y)
+    return 3.0 * smoothstep((12.5 - d) / 6.0)
+
+
+def f_watchtower(c):
+    p = c.p
+    z = c.ground(0, 0)
+    zl = p.base - 0.5
+    sq = np.array([[-2.5, -2.5], [2.5, -2.5], [2.5, 2.5], [-2.5, 2.5]])
+    tw = Manifold.extrude(CrossSection([sq]), z + 9.5 - zl, 0, 0.0, (0.8, 0.8)).translate([0, 0, zl])
+    tw = tw - box(2.5, 0, z, 1.0, 1.3, 2.0)                                       # door
+    for (sx, sy) in ((1, 0), (-1, 0), (0, 1), (0, -1)):                           # arrow slits
+        tw = tw - box(2.3 * sx, 2.3 * sy, z + 5.2, 0.7 if sx else 0.4, 0.4 if sx else 0.7, 1.4)
+    g_sq = np.array([[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]])
+    gal = Manifold.extrude(CrossSection([g_sq]), 1.3, 0, 0.0, (1.65, 1.65)).translate([0, 0, z + 9.0])
+    parts = [tw, gal]
+    for sx in np.linspace(-2.9, 2.9, 5):                                           # merlons
+        for sy in (-3.0, 3.0):
+            parts.append(box(sx, sy, z + 10.25, 0.9, 0.7, 0.7))
+            parts.append(box(sy, sx, z + 10.25, 0.7, 0.9, 0.7))
+    for sx in (-2.3, 2.3):
+        for sy in (-2.3, 2.3):
+            parts.append(box(sx, sy, z + 10.2, 0.7, 0.7, 2.3))                     # roof posts
+    parts.append(pyramid_roof(6.2, 6.2, 1.9).translate([0, 0, z + 12.45]))
+    ring = cyl(0, 0, zl, 9.0, z + 1.6 - zl, seg=48) - cyl(0, 0, zl - 1, 8.1, z + 6, seg=48)
+    ring = ring - box(8.55, 0, zl - 1, 2.6, 3.2, 20)                               # gate
+    parts.append(ring)
+    c.claim(0, 0, 9.6)
+    parts += scatter_trees(c, 5, p_conifer=0.5, rmin=1.4, rmax=2.2)
+    return parts
+
+
 FEATURES = {
     'forest':   dict(parts=f_forest),
     'village':  dict(parts=f_village),
@@ -414,6 +638,12 @@ FEATURES = {
     'temple':   dict(parts=f_temple),
     'ziggurat': dict(parts=f_ziggurat),
     'dungeon':  dict(parts=f_dungeon, height=h_dungeon),
+    'harbour':  dict(parts=f_harbour),
+    'lighthouse': dict(parts=f_lighthouse),
+    'ruins':    dict(parts=f_ruins),
+    'mine':     dict(parts=f_mine, height=h_dungeon),
+    'stones':   dict(parts=f_stones, height=h_stones),
+    'watchtower': dict(parts=f_watchtower, height=h_watch),
 }
 
 
@@ -492,25 +722,69 @@ def pond_signed(c, rng, organic, r0=8.5):
     return gaussian_filter(r - Rth, 0.8 / c.p.res, mode='nearest')
 
 
-def apply_water(c, Z, level_free_edges):
+def apply_water(c, Z, level_free_edges, bw=2.6):
     """Blend the open-water surface (river-floor level, rippled, ripples fading to nothing at the
     shore) into the land surface Z with a gentle beach. Land edges keep the flat tile rim."""
     p, s = c.p, c.water_s
     ripple, lvl = t_water(c)
     fade = smoothstep(-s / 3.0)
     Zw = p.base + lvl + ripple * fade
-    t = smoothstep(s / 2.6)                                    # beach: water level -> land level
+    t = smoothstep(s / bw)                                     # beach: water level -> land level
     for i in level_free_edges:                                 # land edges: hold the flat rim
         d_i = c.a - (c.X * np.cos(60 * i * DEG) + c.Y * np.sin(60 * i * DEG))
         t = np.maximum(t, smoothstep((1.2 - d_i) / 0.8) * smoothstep(s + 1.0))
     return Zw * (1 - t) + Z * t
 
 
+
+def add_cascade(c, Z):
+    """A stepped stream that tumbles down the mountain flank into the river."""
+    p = c.p
+    dr, _ = c.river.query(c.X, c.Y)
+    cand = (dr > 8.0) & (dr < 13.0) & (hexdist(c.X, c.Y) < c.a - 7.0)
+    idx = np.argmax(np.where(cand, Z, -1e9))
+    sy, sx = np.unravel_index(idx, Z.shape)
+    S = np.array([c.xs[sx], c.ys[sy]])
+    # end: the river-bank point on the line towards the river
+    gy, gx = np.gradient(dr, c.ys, c.xs)
+    P = [S.copy()]
+    q = S.copy()
+    for _ in range(400):
+        ix = np.clip(np.searchsorted(c.xs, q[0]), 0, len(c.xs) - 1)
+        iy = np.clip(np.searchsorted(c.ys, q[1]), 0, len(c.ys) - 1)
+        g = np.array([gx[iy, ix], gy[iy, ix]])
+        if dr[iy, ix] < p.river_w / 2 + 0.6:
+            break
+        q = q - 0.5 * g / (np.linalg.norm(g) + 1e-9)
+        P.append(q.copy())
+    P = np.array(P)
+    ds = np.hypot(*np.diff(P, axis=0).T).cumsum()
+    ds = np.r_[0, ds]
+    wig = 1.4 * np.sin(2 * np.pi * ds / 11.0) * smoothstep(ds / 4.0) * smoothstep((ds[-1] - ds) / 4.0)
+    nv = np.gradient(P, axis=0); nv = np.stack([-nv[:, 1], nv[:, 0]], 1)
+    nv /= np.linalg.norm(nv, axis=1, keepdims=True) + 1e-9
+    P = P + wig[:, None] * nv
+    g = np.array([float(RegularGridInterpolator((c.ys, c.xs), Z)([[y, x]])[0]) for x, y in P])
+    g = np.minimum.accumulate(g)
+    step = np.maximum(np.floor((g - p.base) / 1.4) * 1.4 + p.base, p.base)    # staircase of little falls
+    step = np.minimum.accumulate(step)
+    Zn = Z.copy()
+    R = 1.5
+    for (x, y), fl in zip(P, step):
+        ix0, ix1 = np.searchsorted(c.xs, [x - R - 0.5, x + R + 0.5])
+        iy0, iy1 = np.searchsorted(c.ys, [y - R - 0.5, y + R + 0.5])
+        sub = (slice(iy0, iy1), slice(ix0, ix1))
+        d = np.hypot(c.X[sub] - x, c.Y[sub] - y)
+        floor = fl + 0.9 * smoothstep((d - R * 0.55) / (R * 0.9))
+        Zn[sub] = np.minimum(Zn[sub], np.maximum(floor, p.base))
+    c.cascade_pts = P
+    return Zn
+
 # ==========================================================================
 # the builder
 # ==========================================================================
 def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
-               p=None, bridge=False, ford=False, water=None):
+               p=None, bridge=False, ford=False, water=None, cascade=False, style=None):
     p = p or Params()
     c = Ctx(p, seed)
     c.exits = list(road or [])
@@ -518,7 +792,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
 
     # rigid geometry where walls / gates have to line up with the path; the road on a bridge or
     # ford tile is straight, but its river is the same meandering river as the plain river tile
-    rigid = feature in ('city', 'fort', 'temple', 'ziggurat', 'dungeon')
+    rigid = feature in ('city', 'fort', 'temple', 'ziggurat', 'dungeon', 'mine', 'watchtower')
     org = 0.0 if rigid else p.organic * (0.5 if feature == 'village' else 1.0)
     org_road = 0.0 if (bridge or ford) else org
     land_edges = list(range(6))
@@ -527,6 +801,9 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         if water['kind'] == 'coast':
             c.water_s = coast_signed(c, water['edges'], wr, p.organic)
             land_edges = [i for i in range(6) if i not in water['edges']]
+        elif water['kind'] == 'island':        # land in the middle, open water to every edge
+            c.water_s = -pond_signed(c, wr, p.organic, r0=9.5)
+            land_edges = []
         else:
             c.water_s = pond_signed(c, wr, p.organic)
     level = 0.0
@@ -536,12 +813,15 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         h = h * smoothstep(c.water_s / 4.0)    # no relief in the water; land rises away from the shore
     if feature and 'height' in FEATURES[feature]:
         h = h + FEATURES[feature]['height'](c)
+    if style == 'cliff' and c.water_s is not None:   # plateau that drops steeply into the sea
+        rr = 0.75 + 0.5 * ridged(c.X, c.Y, seed + 9, 3, 0.09)
+        h = h + 3.8 * rr * smoothstep((c.water_s - 0.3) / 1.2)
     if terrain != 'water':
         h = h * c.mask                 # flat level rim (water keeps its ripples to the edge)
 
     # --- road & river networks --------------------------------------------
     if road:
-        if feature == 'dungeon':
+        if feature in ('dungeon', 'mine'):
             e = (p.a + 3.0)
             c.road = PathNet([[np.array([e, 0.0]), np.array([XF + 1.5, 0.0])]])
         else:
@@ -562,7 +842,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     if c.road is not None:
         d, _ = c.road.query(c.X, c.Y)
         d = gaussian_filter(d, 0.9 / p.res, mode='nearest')      # no creases on inner bends
-        if feature == 'dungeon':      # approach cut only in front of the facade
+        if feature in ('dungeon', 'mine'):      # approach cut only in front of the facade
             flat = 1 - smoothstep((c.X - (XF + 1.0)) / 1.0) * (1 - smoothstep((np.abs(c.Y) - 4.2) / 2.0))
         else:
             flat = smoothstep((d - p.road_w / 2 - 0.5) / 5.0)
@@ -585,8 +865,11 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     else:
         carve = 0.0
     Z = Z + p.road_h * rm
+    if cascade and c.river is not None:
+        Z = add_cascade(c, Z)
     if c.water_s is not None:
-        Z = apply_water(c, Z, land_edges)
+        bw = {'cliff': 0.9, 'sand': 3.6}.get(style, 2.6)
+        Z = apply_water(c, Z, land_edges, bw)
     c.Z = Z
 
     # --- solid ------------------------------------------------------------
@@ -613,7 +896,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     parts = []
     if feature:
         parts += FEATURES[feature]['parts'](c)
-        if feature == 'dungeon' and getattr(c, 'carve', None) is not None:
+        if feature in ('dungeon', 'mine') and getattr(c, 'carve', None) is not None:
             tile = tile - c.carve
     if terrain == 'forest':
         parts += f_forest(c)
@@ -622,7 +905,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     if parts:
         feat = union(parts)
         feat = feat ^ hex_prism(p.a - 0.05, 80.0, 0.5)       # nothing may poke past the tile edge
-        if feature == 'dungeon' and getattr(c, 'carve', None) is not None:
+        if feature in ('dungeon', 'mine') and getattr(c, 'carve', None) is not None:
             feat = feat - c.carve
         tile = tile + feat
     tile = tile.simplify(0.001)

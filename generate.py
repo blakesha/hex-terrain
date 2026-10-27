@@ -87,6 +87,38 @@ def catalogue():
     cat['ziggurat_0'] = dict(terrain='plains', feature='ziggurat', seed=42)
     cat['ziggurat_1'] = dict(terrain='plains', feature='ziggurat', road=[0], seed=42)
     cat['dungeon_1'] = dict(terrain='plains', feature='dungeon', road=[0], seed=51)
+    # coast styles
+    for n in (1, 2, 3, 4, 5):
+        for t in ('plains', 'hills', 'forest'):
+            cat[f'cliff_coast_{n}_{t}'] = dict(terrain=t, style='cliff', water=dict(kind='coast', edges=list(range(n))), seed=90 + n)
+        cat[f'sand_coast_{n}'] = dict(terrain='desert', style='sand', water=dict(kind='coast', edges=list(range(n))), seed=100 + n)
+        cat[f'marsh_coast_{n}'] = dict(terrain='swamp', water=dict(kind='coast', edges=list(range(n))), seed=110 + n)
+    for n, rv in ((1, 3), (2, 4), (3, 4)):
+        cat[f'cliff_coast_{n}_river_hills'] = dict(terrain='hills', style='cliff', river=[rv], water=dict(kind='coast', edges=list(range(n))), seed=90 + n)
+    # islands
+    for t in ('plains', 'hills', 'forest'):
+        cat[f'island_{t}'] = dict(terrain=t, water=dict(kind='island'), seed=120)
+    cat['island_lighthouse'] = dict(terrain='hills', feature='lighthouse', water=dict(kind='island'), seed=121)
+    # waterfall and mountain passes / gorges
+    cat['waterfall_mountains'] = dict(terrain='mountains', river=[0, 3], cascade=True, seed=4)
+    for pat, ex in PATTERNS.items():
+        cat[f'pass_{pat}_mountains'] = dict(terrain='mountains', road=ex, seed=3)
+        cat[f'gorge_{pat}_mountains'] = dict(terrain='mountains', river=ex, seed=4)
+    # mirror images of the one-handed forks
+    for t in ('plains', 'hills', 'forest', 'desert'):
+        cat[f'road_fork_t_{t}_mirror'] = dict(terrain=t, road=[0, 5, 3], seed=3)
+    for t in ('plains', 'hills', 'forest'):
+        cat[f'river_fork_t_{t}_mirror'] = dict(terrain=t, river=[0, 5, 3], seed=4)
+    cat['ruins_plains'] = dict(terrain='plains', feature='ruins', seed=81)
+    cat['ruins_forest'] = dict(terrain='forest', feature='ruins', seed=82)
+    cat['ruins_road_plains'] = dict(terrain='plains', feature='ruins', road=[0, 3], seed=83)
+    cat['mine_1'] = dict(terrain='plains', feature='mine', road=[0], seed=84)
+    cat['stones_0'] = dict(terrain='plains', feature='stones', seed=85)
+    cat['stones_2'] = dict(terrain='plains', feature='stones', road=[0, 3], seed=85)
+    cat['watchtower_0'] = dict(terrain='plains', feature='watchtower', seed=86)
+    cat['watchtower_1'] = dict(terrain='plains', feature='watchtower', road=[0], seed=86)
+    cat['harbour_0'] = dict(terrain='plains', feature='harbour', water=dict(kind='coast', edges=[0, 1, 2]), seed=63)
+    cat['harbour_1'] = dict(terrain='plains', feature='harbour', road=[4], water=dict(kind='coast', edges=[0, 1, 2]), seed=63)
     return cat
 
 
