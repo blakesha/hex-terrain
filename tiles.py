@@ -30,6 +30,13 @@ class Ctx:
         self.items = []            # occupied circles (x, y, r)
         self.Z = None
         self._ground = None
+        self.water_s = None        # signed distance to a shoreline (negative = open water)
+        self._ws = None
+
+    def s_at(self, x, y):
+        if self._ws is None:
+            self._ws = RegularGridInterpolator((self.ys, self.xs), self.water_s, bounds_error=False, fill_value=1e3)
+        return float(self._ws([[y, x]])[0])
 
     def ground(self, x, y):
         if self._ground is None:
@@ -49,6 +56,8 @@ class Ctx:
             d, _ = self.river.query(np.array([x]), np.array([y]))
             if d[0] < p.river_w / 2 + 1.2 + r:
                 return False
+        if self.water_s is not None and self.s_at(x, y) < r + 1.2:
+            return False
         for (ox, oy, orad) in self.items:
             if np.hypot(x - ox, y - oy) < r + orad + gap:
                 return False
@@ -435,10 +444,73 @@ def bridge_parts(c, road_ang_deg):
 
 
 # ==========================================================================
+# water bodies: coasts (water reaching whole edges) and inland ponds
+# ==========================================================================
+def _vertex(c, k):
+    R = c.a / np.cos(30 * DEG)
+    return R * np.array([np.cos((30 + 60 * k) * DEG), np.sin((30 + 60 * k) * DEG)])
+
+
+def coast_signed(c, edges, rng, organic):
+    """Signed distance to a shoreline that separates the water edges `edges` (consecutive,
+    anticlockwise) from the land. The shoreline runs between the two tile corners where the
+    water edges end, bulging by an amount that depends on how many edges are water."""
+    from matplotlib.path import Path
+    a, n, i0 = c.a, len(edges), edges[0]
+    phi = np.radians(60 * (i0 + (n - 1) / 2.0))
+    u = np.array([np.cos(phi), np.sin(phi)])
+    Vs, Ve = _vertex(c, i0 - 1), _vertex(c, i0 + n - 1)
+    apex_r = {1: a - 9.5, 2: 6.0, 3: 0.0, 4: -6.0, 5: -14.0}[n]
+    apex = u * (apex_r + rng.uniform(-1, 1) * 1.2 * organic)
+    ctrl = 2 * apex - 0.5 * (Vs + Ve)
+    t = np.linspace(0, 1, 160)[:, None]
+    curve = (1 - t) ** 2 * Vs + 2 * (1 - t) * t * ctrl + t ** 2 * Ve
+    dense, sarc = PathNet._resample(curve)
+    tang = np.gradient(dense, axis=0)
+    tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-12
+    nrm = np.stack([-tang[:, 1], tang[:, 0]], 1)
+    ph = rng.uniform(0, 2 * np.pi, 2)
+    wig = 1.6 * np.sin(2 * np.pi * sarc / rng.uniform(14, 20) + ph[0]) + 0.7 * np.sin(2 * np.pi * sarc / rng.uniform(7, 10) + ph[1])
+    taper = smoothstep(np.minimum(sarc, sarc[-1] - sarc) / 6.0)          # shoreline meets the corners cleanly
+    dense = dense + (organic * wig * taper)[:, None] * nrm
+    dense = gaussian_filter1d(dense, sigma=2.2 / 0.4, axis=0, mode='nearest')
+    k_out = (a + 3.0) / a                     # push the water polygon past the tile edge so the clip never
+    chain = [_vertex(c, i0 - 1)] + [k_out * _vertex(c, i0 - 1 + j) for j in range(n + 1)] + [_vertex(c, i0 + n - 1)]
+    poly = np.array(chain + list(dense[::-1][1:-1]))   # sees a half-land, half-water boundary
+    inside = Path(poly).contains_points(np.c_[c.X.ravel(), c.Y.ravel()]).reshape(c.X.shape)
+    d, _ = PathNet([dense]).query(c.X, c.Y)
+    s = np.where(inside, -d, d)
+    return gaussian_filter(s, 0.8 / c.p.res, mode='nearest')
+
+
+def pond_signed(c, rng, organic, r0=8.5):
+    c0 = rng.uniform(-1.5, 1.5, 2) * organic
+    th = np.arctan2(c.Y - c0[1], c.X - c0[0])
+    r = np.hypot(c.X - c0[0], c.Y - c0[1])
+    ph = rng.uniform(0, 2 * np.pi, 3)
+    Rth = r0 * (1 + organic * (0.16 * np.sin(2 * th + ph[0]) + 0.10 * np.sin(3 * th + ph[1]) + 0.06 * np.sin(5 * th + ph[2])))
+    return gaussian_filter(r - Rth, 0.8 / c.p.res, mode='nearest')
+
+
+def apply_water(c, Z, level_free_edges):
+    """Blend the open-water surface (river-floor level, rippled, ripples fading to nothing at the
+    shore) into the land surface Z with a gentle beach. Land edges keep the flat tile rim."""
+    p, s = c.p, c.water_s
+    ripple, lvl = t_water(c)
+    fade = smoothstep(-s / 3.0)
+    Zw = p.base + lvl + ripple * fade
+    t = smoothstep(s / 2.6)                                    # beach: water level -> land level
+    for i in level_free_edges:                                 # land edges: hold the flat rim
+        d_i = c.a - (c.X * np.cos(60 * i * DEG) + c.Y * np.sin(60 * i * DEG))
+        t = np.maximum(t, smoothstep((1.2 - d_i) / 0.8) * smoothstep(s + 1.0))
+    return Zw * (1 - t) + Z * t
+
+
+# ==========================================================================
 # the builder
 # ==========================================================================
 def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
-               p=None, bridge=False, ford=False):
+               p=None, bridge=False, ford=False, water=None):
     p = p or Params()
     c = Ctx(p, seed)
     c.exits = list(road or [])
@@ -449,9 +521,19 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     rigid = feature in ('city', 'fort', 'temple', 'ziggurat', 'dungeon')
     org = 0.0 if rigid else p.organic * (0.5 if feature == 'village' else 1.0)
     org_road = 0.0 if (bridge or ford) else org
+    land_edges = list(range(6))
+    if water:                                  # {'kind': 'coast', 'edges': [0, 1, 2]} or {'kind': 'pond'}
+        wr = np.random.RandomState(seed + 303)
+        if water['kind'] == 'coast':
+            c.water_s = coast_signed(c, water['edges'], wr, p.organic)
+            land_edges = [i for i in range(6) if i not in water['edges']]
+        else:
+            c.water_s = pond_signed(c, wr, p.organic)
     level = 0.0
     h, level = TERRAINS[terrain](c)
     h = np.asarray(h, float)
+    if c.water_s is not None:
+        h = h * smoothstep(c.water_s / 4.0)    # no relief in the water; land rises away from the shore
     if feature and 'height' in FEATURES[feature]:
         h = h + FEATURES[feature]['height'](c)
     if terrain != 'water':
@@ -466,8 +548,15 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
             c.road = PathNet.from_exits(road, p.a, rng=np.random.RandomState(seed + 101),
                                         organic=0.6 * org_road, wamp=0.10)
     if river:
+        end = None
+        if water and water['kind'] == 'coast' and len(river) == 1:       # river mouth: run on into the sea
+            dv = np.array([np.cos(60 * river[0] * DEG), np.sin(60 * river[0] * DEG)])
+            for lam in np.linspace(p.a, -p.a, 400):
+                if c.s_at(*(dv * lam)) < 0:
+                    end = dv * (lam - 1.5)
+                    break
         c.river = PathNet.from_exits(river, p.a, rng=np.random.RandomState(seed + 202),
-                                     organic=org, wamp=0.22)
+                                     organic=org, wamp=0.22, end=end)
 
     Z = p.base + level + h
     if c.road is not None:
@@ -496,6 +585,8 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     else:
         carve = 0.0
     Z = Z + p.road_h * rm
+    if c.water_s is not None:
+        Z = apply_water(c, Z, land_edges)
     c.Z = Z
 
     # --- solid ------------------------------------------------------------

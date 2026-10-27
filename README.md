@@ -8,14 +8,14 @@ tiles at every angle, so you can lay out a map on the table and rebuild it any w
 
 ![Sample tiles](previews/overview.png)
 
-The repository holds the generator, not the STL files. Run it once and you get 73 ready-to-slice
-STLs in about 20 seconds.
+The repository holds the generator, not the STL files. Run it once and you get 109 ready-to-slice
+STLs in about 30 seconds.
 
 ## Quick start
 
 ```
 pip install numpy scipy trimesh manifold3d pillow
-python3 generate.py --set all          # writes 73 STLs to ./stl
+python3 generate.py --set all          # writes 109 STLs to ./stl
 python3 validate.py stl                # printability report
 python3 preview.py sheet.png stl/*.stl --cols 4
 ```
@@ -30,6 +30,8 @@ Requires Python 3.9+. No GPU or CAD program is needed; previews are software-ren
 | Roads | dead end, straight, gentle curve, sharp curve, Y-fork, T-fork, crossroads, on plains, hills, forest and desert |
 | Rivers | the same seven patterns, on plains, hills and forest |
 | Crossings | bridge, ford |
+| Coasts | water on 1 to 5 edges (cove, corner, straight shore, bay, cape), on plains, hills and forest; plus river mouths that run into the sea |
+| Lakes | a pond in the middle of a tile, with 0 to 3 rivers running through it, on plains and forest |
 | Villages | no road, road ends, road passes through |
 | Walled cities | one, two (opposite) or three gates |
 | Other features | fort, classical temple, ziggurat, dungeon entrance cut into a hill (each with and without a road where it makes sense) |
@@ -61,6 +63,24 @@ tile and tiles the hex lattice, so it continues unbroken across shared edges.
 ![Roads](previews/roads.png)
 ![Rivers and bridge](previews/rivers.png)
 ![More terrain and features](previews/misc.png)
+
+## Coasts and lakes
+
+![Coasts and river mouths](previews/coasts.png)
+
+**Coasts** are land tiles where open water reaches whole edges. `coast_N_<terrain>` has water on its first
+`N` edges (edges 0 to N-1) and land on the rest: `coast_1` is a cove, `coast_2` a corner, `coast_3` a straight
+shore, `coast_4` a broad bay and `coast_5` a cape with a single land edge. Water edges carry exactly the same
+ripple pattern as the `water` tile, so they join water tiles (or other coasts) with no visible seam; land edges
+keep the normal flat rim. The shoreline wanders, with a short beach (the water sits 1 mm below the land).
+`coast_N_river_<terrain>` (N = 1, 2, 3) adds a river that crosses the land and runs out into the sea.
+
+**Lakes.** A lake is just water tiles ringed by coast tiles, so the coasts double as lake shores. For lakes
+that fit inside one hex there are `lake_pond_*` tiles, a pond in the middle with land to every edge, and
+`lake_river_*` tiles (1 exit, straight, gentle curve, sharp curve, Y-fork) where rivers flow into, through or
+out of the pond. Their river edges are the standard river profile, so they join any river tile.
+
+![Lake tiles](previews/lakes.png)
 
 ## Tile geometry
 
@@ -148,12 +168,15 @@ there; to add a new feature, write a function in `tiles.py` and register it in `
   more empty space rather than bigger buildings
 - Roads over mountains and swamp, and rivers over desert, mountains and swamp, are not in the default set
   (the generator supports them)
-- No coastline, waterfall or mountain-pass tiles yet
+- No waterfall or mountain-pass tiles yet
+- Coasts come in one orientation per shape (water on the first N edges); rotate the print. The shoreline of
+  a mirrored coast is not generated, so a `coast_2` or `coast_3` is the same handedness everywhere
 - Not every tile has been test-printed; the meshes pass the geometric checks above
 
 ## Ideas
 
-- Coasts, waterfalls and mountain passes
+- Waterfalls and mountain passes
+- Cliff and harbour coasts, islands, reeds and sand
 - Ruins, mines, harbours, standing stones, watchtowers
 - A snow-cap or separate-colour option for multi-material printers
 - Hex-grid layout helper that writes a plate arrangement for your bed size

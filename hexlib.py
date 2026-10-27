@@ -150,7 +150,7 @@ class PathNet:
         return np.stack([np.interp(t, s, poly[:, 0]), np.interp(t, s, poly[:, 1])], 1), t
 
     @staticmethod
-    def from_exits(exits, a, ext=3.0, rng=None, organic=0.0, wamp=0.0):
+    def from_exits(exits, a, ext=3.0, rng=None, organic=0.0, wamp=0.0, end=None):
         """Paths from edge midpoints (always leaving the edge perpendicular, at the
         same place and width) into the tile.  `organic` scales the meander, which
         fades to nothing near every edge so neighbouring tiles still line up."""
@@ -159,8 +159,8 @@ class PathNet:
         pts = [(a + ext) * d for d in dirs]
         base, center_fixed = [], False
         if len(exits) == 1:
-            end = dirs[0] * (rng.uniform(0.0, 4.0) * organic)
-            base.append(np.array([pts[0], end]))
+            stop = dirs[0] * (rng.uniform(0.0, 4.0) * organic) if end is None else np.asarray(end, float)
+            base.append(np.array([pts[0], stop]))
         elif len(exits) == 2:
             P0, P3 = pts
             span = np.linalg.norm(P0 - P3)

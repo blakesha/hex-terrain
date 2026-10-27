@@ -62,6 +62,19 @@ def catalogue():
             cat[f'river_{pat}_{t}'] = dict(terrain=t, river=ex, seed=4)
     cat['bridge_plains'] = dict(terrain='plains', river=[0, 3], road=[1, 4], bridge=True, seed=4)   # same river as river_straight_plains
     cat['ford_plains'] = dict(terrain='plains', river=[0, 3], road=[1, 4], ford=True, seed=4)      # same river as river_straight_plains
+    # coasts: water on the first n edges (0..n-1); land on the rest.  The same tiles are the
+    # shores of lakes - surround water tiles with them.
+    for n in (1, 2, 3, 4, 5):
+        for t in ('plains', 'hills', 'forest'):
+            cat[f'coast_{n}_{t}'] = dict(terrain=t, water=dict(kind='coast', edges=list(range(n))), seed=60 + n)
+    for n, rv in ((1, 3), (2, 4), (3, 4)):                       # river mouths on the land edge facing the sea
+        for t in ('plains', 'hills', 'forest'):
+            cat[f'coast_{n}_river_{t}'] = dict(terrain=t, river=[rv], water=dict(kind='coast', edges=list(range(n))), seed=60 + n)
+    # inland lakes: a pond in the middle of the tile, with rivers running through it
+    for t in ('plains', 'forest'):
+        cat[f'lake_pond_{t}'] = dict(terrain=t, water=dict(kind='pond'), seed=70)
+        for pat, ex in (('1', [0]), ('straight', [0, 3]), ('curve_gentle', [0, 2]), ('curve_sharp', [0, 1]), ('fork_y', [0, 2, 4])):
+            cat[f'lake_river_{pat}_{t}'] = dict(terrain=t, river=ex, water=dict(kind='pond'), seed=70)
     cat['village_0'] = dict(terrain='plains', feature='village', seed=11)
     cat['village_1'] = dict(terrain='plains', feature='village', road=[0], seed=11)
     cat['village_2'] = dict(terrain='plains', feature='village', road=[0, 3], seed=12)
@@ -79,7 +92,8 @@ def catalogue():
 
 TEST = ['plains', 'hills', 'mountains', 'forest', 'water', 'road_curve_gentle_forest',
         'river_curve_sharp_hills', 'river_fork_y_plains', 'bridge_plains', 'ford_plains',
-        'village_2', 'city_2', 'fort_1', 'temple_1', 'ziggurat_1', 'dungeon_1']
+        'village_2', 'city_2', 'fort_1', 'temple_1', 'ziggurat_1', 'dungeon_1',
+        'coast_3_plains', 'coast_1_hills', 'coast_3_river_plains', 'lake_river_straight_plains']
 
 
 def main():
