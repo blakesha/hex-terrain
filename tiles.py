@@ -108,9 +108,24 @@ def t_swamp(c):
 
 
 def t_water(c):
-    ripple = 0.12 * np.sin(1.7 * c.X + 3 * fbm(c.X, c.Y, c.seed + 10, 2, 0.1)) * \
-        np.sin(1.3 * c.Y + 3 * fbm(c.X, c.Y, c.seed + 11, 2, 0.1))
-    return ripple, -c.p.river_depth
+    """Wavy crest lines from lattice-periodic waves (wave vectors from the hex reciprocal lattice).
+    The phases are fixed, not per tile, so every water tile carries the same pattern and it
+    runs unbroken across the shared edge of neighbouring tiles. Troughs sit exactly at the
+    river-floor level, so rivers and lakes meet cleanly."""
+    F, s3 = c.p.flat, np.sqrt(3.0)
+    b1 = np.array([1.0, -1.0 / s3]) / F
+    b2 = np.array([0.0, 2.0 / s3]) / F
+    rng = np.random.RandomState(20261027)
+    s = np.zeros_like(c.X)
+    for (m, n), w in (((2, 1), 1.0), ((3, 0), 0.9), ((3, 1), 0.8), ((4, 0), 0.6), ((3, 2), 0.5)):
+        k = 2 * np.pi * (m * b1 + n * b2)
+        for r in range(3):                       # k and -k are the same wave
+            th = r * 60 * DEG
+            kx = k[0] * np.cos(th) - k[1] * np.sin(th)
+            ky = k[0] * np.sin(th) + k[1] * np.cos(th)
+            s += w * np.cos(kx * c.X + ky * c.Y + rng.uniform(0, 2 * np.pi))
+    s = s / 1.5                                   # ~unit spread (fixed constant: identical on every tile)
+    return 0.35 * np.exp(-(s / 0.5) ** 2), -c.p.river_depth
 
 
 TERRAINS = dict(plains=t_plains, hills=t_hills, forest=lambda c: tuple([0.45 * t_hills(c)[0] + 0.3, 0.0]),
@@ -414,12 +429,16 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     c.exits = list(road or [])
     c.fort_flags = ('gate',) if feature == 'fort' else ()
 
+    # rigid geometry where a deck / walls / gates have to line up with the path
+    rigid = bridge or ford or feature in ('city', 'fort', 'temple', 'ziggurat', 'dungeon')
+    org = 0.0 if rigid else p.organic * (0.5 if feature == 'village' else 1.0)
     level = 0.0
     h, level = TERRAINS[terrain](c)
     h = np.asarray(h, float)
     if feature and 'height' in FEATURES[feature]:
         h = h + FEATURES[feature]['height'](c)
-    h = h * c.mask                     # flat level rim
+    if terrain != 'water':
+        h = h * c.mask                 # flat level rim (water keeps its ripples to the edge)
 
     # --- road & river networks --------------------------------------------
     if road:
@@ -427,9 +446,11 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
             e = (p.a + 3.0)
             c.road = PathNet([[np.array([e, 0.0]), np.array([XF + 1.5, 0.0])]])
         else:
-            c.road = PathNet.from_exits(road, p.a)
+            c.road = PathNet.from_exits(road, p.a, rng=np.random.RandomState(seed + 101),
+                                        organic=0.6 * org, wamp=0.10)
     if river:
-        c.river = PathNet.from_exits(river, p.a)
+        c.river = PathNet.from_exits(river, p.a, rng=np.random.RandomState(seed + 202),
+                                     organic=org, wamp=0.22)
 
     Z = p.base + level + h
     if c.road is not None:
@@ -475,7 +496,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         for i in range(6):
             for off in offs:
                 pk = Manifold.cylinder(depth + 1.0, r, r, 32).rotate([0, 90, 0]) \
-                    .translate([p.a - depth, off, 2.0]).rotate([0, 0, 60 * i])
+                    .translate([p.a - depth, off, 1.9]).rotate([0, 0, 60 * i])
                 tile = tile - pk
 
     # --- features ---------------------------------------------------------

@@ -7,7 +7,7 @@ import trimesh
 from PIL import Image, ImageDraw
 
 
-def render(mesh, size=420, az=-35, el=42, ssaa=2):
+def render(mesh, size=420, az=-35, el=42, ssaa=2, span=25.0):
     S = size * ssaa
     v = mesh.vertices.copy()
     a, e = np.radians(az), np.radians(el)
@@ -16,7 +16,7 @@ def render(mesh, size=420, az=-35, el=42, ssaa=2):
     w = (Rx @ Rz @ v.T).T                       # x right, y = depth (away), z up on screen
     # after tilt: screen x = w[:,0], screen y = w[:,2], depth = -w[:,1]
     sx, sy, dp = w[:, 0], w[:, 2], -w[:, 1]
-    sc = S * 0.46 / 25.0
+    sc = S * 0.46 / span
     px = S / 2 + sx * sc
     py = S * 0.60 - sy * sc
     F = mesh.faces
@@ -68,10 +68,24 @@ def main():
     ap.add_argument('--size', type=int, default=420)
     ap.add_argument('--az', type=float, default=-35)
     ap.add_argument('--el', type=float, default=42)
+    ap.add_argument('--span', type=float, default=25.0, help='half-width of the view in mm')
+    ap.add_argument('--group', action='store_true', help='render all STLs offset onto the hex lattice, as one scene')
     a = ap.parse_args()
     tiles = []
+    if a.group:                      # first STL repeated/placed on lattice cells: pass names; offsets from --cells
+        import numpy as np
+        cells = [(0, 0), (1, 0), (0, 1), (-1, 1)]
+        meshes = []
+        for f, (i, j) in zip(a.files, cells):
+            m = trimesh.load(f)
+            m.apply_translation([40.0 * i + 20.0 * j, 34.641 * j, 0])
+            meshes.append(m)
+        scene = trimesh.util.concatenate(meshes)
+        scene.apply_translation([-scene.bounds.mean(axis=0)[0], -scene.bounds.mean(axis=0)[1], 0])
+        im = render(scene, a.size, a.az, a.el, span=a.span)
+        im.save(a.out); print('wrote', a.out); return
     for f in a.files:
-        im = render(trimesh.load(f), a.size, a.az, a.el)
+        im = render(trimesh.load(f), a.size, a.az, a.el, span=a.span)
         d = ImageDraw.Draw(im)
         d.text((8, 6), os.path.splitext(os.path.basename(f))[0], fill=(40, 40, 40))
         tiles.append(im)

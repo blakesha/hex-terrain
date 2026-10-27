@@ -39,8 +39,20 @@ The number on features is how many road exits the tile has.
 
 Roads and rivers are listed by the edges they use; print one and rotate it. Six rotations
 cover everything, fewer for symmetric tiles. `fork_t` is one-handed, so mirror it in your slicer
-for the other hand. The `water` tile sits 1 mm below the land, exactly the river floor level, so
-rivers flow straight into lakes.
+for the other hand.
+
+**Meandering paths.** Rivers and roads wander, and rivers also swell and narrow. The meander fades
+to nothing at every edge, so each path still leaves the tile at the edge midpoint, perpendicular,
+with the standard width, and any tile still joins any other. Bridge, ford and the walled or
+fortified feature tiles keep straight paths so decks and gates line up; villages meander gently.
+`--organic 0` gives the old geometric paths, `--organic 1.5` wilder ones.
+
+**Water.** The `water` tile sits 1 mm below the land, exactly the river floor level, so rivers
+flow straight into lakes. Its surface carries a wavy crest pattern that runs right to the edge
+(troughs at river level, crests up to 0.35 mm above). The pattern is the same on every water
+tile and tiles the hex lattice, so it continues unbroken across shared edges.
+
+![Four water tiles joined](previews/water_seamless.png)
 
 ![Roads](previews/roads.png)
 ![Rivers and bridge](previews/rivers.png)
@@ -56,6 +68,8 @@ rivers flow straight into lakes.
   edge at the midpoint, perpendicular, with an identical profile, so
   **any tile joins any tile, in any rotation**
 - Water sits at river-floor level, so rivers and lakes meet seamlessly
+- Water ripples are lattice-periodic, so water tiles placed in the same orientation match exactly;
+  turning one by 60 degrees leaves a seam step of at most 0.35 mm
 
 ## Magnets
 
@@ -82,10 +96,12 @@ Pockets sit below the lowest surface at every edge, so rivers never break into t
 1. **Heightmap.** Each tile starts as a heightfield on a 0.3 mm grid. Terrain comes from vectorised
    gradient noise: ridged noise under a few Gaussian peaks for mountains, smoothed low-frequency noise for
    hills, warped sawtooth ridges for dunes, tussocks and pools for swamp. A smooth mask forces the height
-   to zero across the rim so neighbouring tiles always match.
-2. **Roads and rivers.** Paths run from edge midpoints to the centre (Bezier curves for two exits,
-   straight spokes for three or more). Terrain is flattened or valley-shaped around them, roads are raised
-   and rivers are carved. Bridges and fords are variants that crossing roads and rivers use.
+   to zero across the rim so neighbouring tiles always match. Water is the exception: its ripples come from
+   waves on the hex reciprocal lattice, which repeat exactly from tile to tile.
+2. **Roads and rivers.** Paths leave each edge midpoint radially and join through cubic Bezier curves
+   (two exits) or spokes (three or more). A sinusoidal sideways wiggle and width variation are added,
+   both tapered to zero near the edges so tiles still match. Terrain is flattened or valley-shaped
+   around the path, roads are raised and rivers carved. Bridge and ford tiles keep rigid paths.
 3. **Solid and clipping.** The heightfield is closed into a solid and intersected with a chamfered
    hexagonal prism, then magnet pockets are cut.
 4. **Structures.** Trees (stepped conifers, lumpy broadleaves), houses with eaves, walls, towers,
@@ -114,9 +130,10 @@ python3 generate.py --set all                     # everything
 python3 generate.py --only city_2 forest          # chosen tiles
 python3 generate.py --flat 60                     # 60 mm tiles (structures do not scale; see below)
 python3 generate.py --out my_stl --res 0.2        # output folder, finer heightmap grid
+python3 generate.py --organic 0                   # straight, geometric roads and rivers
 ```
 
-Options: `--flat`, `--no-magnets`, `--magnets-per-edge {1,2}`, `--magnet-d`, `--magnet-t`, `--res`, `--out`.
+Options: `--flat`, `--no-magnets`, `--magnets-per-edge {1,2}`, `--magnet-d`, `--magnet-t`, `--res`, `--organic`, `--out`.
 
 To change how a tile looks, edit its `seed` in the catalogue in `generate.py`. To add a tile, add an entry
 there; to add a new feature, write a function in `tiles.py` and register it in `FEATURES`.

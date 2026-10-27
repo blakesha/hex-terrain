@@ -38,6 +38,7 @@ class Params:
     river_w: float = 6.0
     river_depth: float = 1.0
     chamfer: float = 0.4        # bottom-edge chamfer (reduces elephant's foot)
+    organic: float = 1.0        # 0 = geometric roads/rivers, 1 = meandering
 
     @property
     def a(self):                # actual apothem of the printed tile
@@ -122,41 +123,88 @@ def hex_prism(a, h, z0=0.0, scale=1.0):
 # road / river paths
 # --------------------------------------------------------------------------
 class PathNet:
-    def __init__(self, polys):
+    """A network of polylines with a per-vertex width scale.
+    query() returns the distance to the network *divided by the local width scale*,
+    so callers keep using fixed width constants while the path swells and narrows."""
+
+    def __init__(self, polys, widths=None):
         self.polys = [np.asarray(p, float) for p in polys]
-        A, B = [], []
-        for p in self.polys:
-            for i in range(len(p) - 1):
-                A.append(p[i]); B.append(p[i + 1])
-        self.A, self.B = np.array(A), np.array(B)
+        A, B, W = [], [], []
+        for i, p in enumerate(self.polys):
+            w = np.ones(len(p)) if widths is None else np.asarray(widths[i], float)
+            for k in range(len(p) - 1):
+                A.append(p[k]); B.append(p[k + 1]); W.append(0.5 * (w[k] + w[k + 1]))
+        self.A, self.B, self.W = np.array(A), np.array(B), np.array(W)
         self.D = self.B - self.A
         self.L2 = (self.D ** 2).sum(1) + 1e-12
         self.ang = np.arctan2(self.D[:, 1], self.D[:, 0])
 
     @staticmethod
-    def from_exits(exits, a, ext=3.0):
-        pts = [(a + ext) * np.array([np.cos(60 * e * DEG), np.sin(60 * e * DEG)]) for e in exits]
-        c = np.zeros(2)
-        polys = []
+    def _resample(poly, step=0.4):
+        poly = np.asarray(poly, float)
+        seg = np.hypot(*np.diff(poly, axis=0).T)
+        s = np.concatenate([[0], np.cumsum(seg)])
+        n = max(2, int(s[-1] / step) + 1)
+        t = np.linspace(0, s[-1], n)
+        return np.stack([np.interp(t, s, poly[:, 0]), np.interp(t, s, poly[:, 1])], 1), t
+
+    @staticmethod
+    def from_exits(exits, a, ext=3.0, rng=None, organic=0.0, wamp=0.0):
+        """Paths from edge midpoints (always leaving the edge perpendicular, at the
+        same place and width) into the tile.  `organic` scales the meander, which
+        fades to nothing near every edge so neighbouring tiles still line up."""
+        rng = rng if rng is not None else np.random.RandomState(0)
+        dirs = [np.array([np.cos(60 * e * DEG), np.sin(60 * e * DEG)]) for e in exits]
+        pts = [(a + ext) * d for d in dirs]
+        base, center_fixed = [], False
         if len(exits) == 1:
-            polys.append([pts[0], c])
+            end = dirs[0] * (rng.uniform(0.0, 4.0) * organic)
+            base.append(np.array([pts[0], end]))
         elif len(exits) == 2:
-            t = np.linspace(0, 1, 41)[:, None]
-            polys.append((1 - t) ** 2 * pts[0] + 2 * (1 - t) * t * c + t ** 2 * pts[1])
+            P0, P3 = pts
+            span = np.linalg.norm(P0 - P3)
+            k0, k1 = [span * (0.30 + 0.30 * (1 - organic) + 0.18 * organic * rng.rand()) for _ in range(2)]
+            if np.allclose(P0, -P3):                 # straight through: keep the control points on the line
+                k0 = k1 = span / 3
+            P1, P2 = P0 - dirs[0] * k0, P3 - dirs[1] * k1
+            t = np.linspace(0, 1, 80)[:, None]
+            base.append((1 - t) ** 3 * P0 + 3 * (1 - t) ** 2 * t * P1 + 3 * (1 - t) * t ** 2 * P2 + t ** 3 * P3)
         else:
-            for pt in pts:
-                polys.append([pt, c])
-        return PathNet(polys)
+            c = rng.uniform(-1, 1, 2) * 1.2 * organic
+            center_fixed = True
+            for d, pt in zip(dirs, pts):
+                base.append(np.array([pt, d * 9.0, c]))
+        out, wid = [], []
+        for poly in base:
+            dense, s = PathNet._resample(poly)
+            if organic > 0:
+                tang = np.gradient(dense, axis=0)
+                tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-12
+                nrm = np.stack([-tang[:, 1], tang[:, 0]], 1)
+                ph = rng.uniform(0, 2 * np.pi, 4)
+                wig = (2.3 * np.sin(2 * np.pi * s / rng.uniform(15, 22) + ph[0])
+                       + 0.7 * np.sin(2 * np.pi * s / rng.uniform(7.0, 10.0) + ph[1]))
+                hd = hexdist(dense[:, 0], dense[:, 1])
+                taper = smoothstep((a - hd - 1.0) / 8.0)
+                if center_fixed or len(exits) == 1:        # junctions and dead ends stay put
+                    taper = taper * smoothstep(np.hypot(*(dense - poly[-1]).T) / 6.0)
+                dense = dense + (organic * wig * taper)[:, None] * nrm
+                wsc = 1.0 + wamp * (0.65 * np.sin(2 * np.pi * s / rng.uniform(8, 13) + ph[2])
+                                    + 0.35 * np.sin(2 * np.pi * s / rng.uniform(4, 6) + ph[3])) * taper
+            else:
+                wsc = np.ones(len(dense))
+            out.append(dense); wid.append(wsc)
+        return PathNet(out, wid)
 
     def query(self, X, Y):
-        """distance to network and local tangent angle"""
+        """width-normalised distance to the network and the local tangent angle"""
         P = np.stack([np.ravel(X), np.ravel(Y)], 1)
         best = np.full(len(P), 1e9)
         bi = np.zeros(len(P), int)
         for k in range(len(self.A)):
             t = np.clip(((P - self.A[k]) @ self.D[k]) / self.L2[k], 0, 1)
             q = self.A[k] + t[:, None] * self.D[k]
-            d = np.hypot(P[:, 0] - q[:, 0], P[:, 1] - q[:, 1])
+            d = np.hypot(P[:, 0] - q[:, 0], P[:, 1] - q[:, 1]) / self.W[k]
             m = d < best
             best[m] = d[m]
             bi[m] = k

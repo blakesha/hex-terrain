@@ -93,10 +93,11 @@ def main():
     ap.add_argument('--magnet-d', type=float, default=3.0)
     ap.add_argument('--magnet-t', type=float, default=1.0)
     ap.add_argument('--res', type=float, default=0.3)
+    ap.add_argument('--organic', type=float, default=1.0, help='meander of roads/rivers, 0 = geometric')
     a = ap.parse_args()
 
     p = Params(flat=a.flat, magnets=not a.no_magnets, magnet_d=a.magnet_d,
-               magnet_t=a.magnet_t, res=a.res, magnets_per_edge=a.magnets_per_edge)
+               magnet_t=a.magnet_t, res=a.res, magnets_per_edge=a.magnets_per_edge, organic=a.organic)
     cat = catalogue()
     names = a.only if a.only else (TEST if a.set == 'test' else list(cat))
     os.makedirs(a.out, exist_ok=True)
