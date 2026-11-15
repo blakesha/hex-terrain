@@ -28,6 +28,14 @@ SHEETS = {
     'features2': (['ruins_plains', 'mine_1', 'stones_0', 'watchtower_0', 'harbour_0', 'island_lighthouse'], 3, 420, {}),
     'coast_styles': (['cliff_coast_3_hills', 'sand_coast_3', 'marsh_coast_3', 'cliff_coast_1_river_hills', 'island_forest',
                       'island_hills'], 3, 420, {}),
+    'terrains2': (['tundra', 'glacier', 'jungle', 'farmland', 'forest_hills', 'forest_mountains'], 3, 420, {}),
+    'towns': (['village_0', 'village_farm_2', 'village_2', 'city_1', 'city_2', 'city_3'], 3, 500, {'span': 22.0}),
+    'more_paths': (['road_straight_swamp', 'river_curve_gentle_desert', 'river_straight_jungle', 'road_fork_y_farmland',
+                    'river_curve_sharp_tundra', 'road_curve_gentle_forest_hills', 'river_straight_swamp',
+                    'road_straight_forest_mountains'], 4, 400, {}),
+    'mirrored_coasts': (['coast_2_plains', 'coast_2_plains_mirror', 'coast_3_hills', 'coast_3_hills_mirror',
+                         'coast_2_river_plains', 'coast_2_river_plains_mirror', 'coast_3_mountains', 'coast_3_mountains_mirror'],
+                        4, 400, {}),
     'mountains2': (['waterfall_mountains', 'pass_straight_mountains', 'gorge_curve_gentle_mountains',
                     'pass_fork_y_mountains'], 2, 480, {}),
 }
@@ -48,7 +56,7 @@ def water_seamless(stl):
     cy = sum(t.V[:, 1].mean() for t in tiles) / 4
     for t in tiles:
         t.V[:, 0] -= cx; t.V[:, 1] -= cy
-        t.grid = (t.grid[0] - cx, t.grid[1] - cy) + t.grid[2:]
+        t.grid['xs'] = t.grid['xs'] - cx; t.grid['ys'] = t.grid['ys'] - cy
     return render_scene(tiles, size=900, span=38.0)
 
 

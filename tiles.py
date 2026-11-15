@@ -8,6 +8,7 @@ from scipy.ndimage import gaussian_filter
 from manifold3d import Manifold, CrossSection
 
 from hexlib import *
+from buildings import village_parts, city_parts, city_streets, townhouse
 
 
 # ==========================================================================
@@ -27,6 +28,7 @@ class Ctx:
         self.mask = smoothstep((self.a - p.rim - self.hd) / p.fade)
         self.road = None
         self.river = None
+        self.extra = {}            # extra grids (fields, hedges, urban ground ...) for the preview sidecar
         self.items = []            # occupied circles (x, y, r)
         self.Z = None
         self._ground = None
@@ -145,14 +147,71 @@ def t_water(c):
     return 0.35 * np.exp(-(s / 0.5) ** 2), -c.p.river_depth
 
 
+def t_tundra(c):
+    """low rolling ground with frost-heave hummocks, stones and thin snow patches (colour only)"""
+    n = 0.5 + 0.5 * fbm(c.X, c.Y, c.seed + 12, 3, 0.06)
+    hum = 0.5 + 0.5 * fbm(c.X, c.Y, c.seed + 13, 2, 0.32)
+    return 0.9 * n * n + 0.45 * hum, 0.0
+
+
+def t_glacier(c):
+    """ice field: swells cut by crevasses (kept above the water line so they read as ice, not water)"""
+    wx = c.X + 3.0 * fbm(c.X, c.Y, c.seed + 14, 2, 0.06)
+    wy = c.Y + 3.0 * fbm(c.X + 40, c.Y, c.seed + 15, 2, 0.06)
+    r = ridged(wx, wy, c.seed + 16, 3, 0.085)
+    crev = smoothstep((r - 0.70) / 0.2)
+    n = 0.5 + 0.5 * fbm(c.X, c.Y, c.seed + 17, 3, 0.05)
+    sast = 0.5 + 0.5 * fbm(c.X, c.Y, c.seed + 18, 2, 0.3)
+    c.extra['crev'] = crev.astype(np.float32)
+    return 1.0 + 1.5 * n + 0.3 * sast - 0.95 * crev, 0.0
+
+
+def t_farmland(c):
+    """a patchwork of fields: each has its own level and furrow direction, hedgerows run along the boundaries"""
+    from scipy.spatial import cKDTree
+    rng = np.random.RandomState(c.seed + 50)
+    pts = []
+    for i in range(-3, 4):
+        for j in range(-3, 4):
+            pts.append([12.5 * (i + 0.5 * j) + rng.uniform(-4.8, 4.8), 10.8 * j + rng.uniform(-4.8, 4.8)])
+    pts = np.array(pts)
+    wx = c.X + 2.6 * fbm(c.X, c.Y, c.seed + 53, 2, 0.09)                   # wavy field boundaries
+    wy = c.Y + 2.6 * fbm(c.X + 30, c.Y - 20, c.seed + 54, 2, 0.09)
+    d, idx = cKDTree(pts).query(np.c_[wx.ravel(), wy.ravel()], k=2)
+    field = idx[:, 0].reshape(c.X.shape)
+    bd = ((d[:, 1] - d[:, 0]) / 2).reshape(c.X.shape)
+    hedge = smoothstep((0.62 - bd) / 0.35)
+    ang = rng.uniform(0, np.pi, len(pts))
+    ph = rng.uniform(0, 2 * np.pi, len(pts))
+    kind = rng.randint(0, 4, len(pts))                  # 0 ploughed, 1 crop, 2 pasture, 3 wheat
+    amp = np.array([0.24, 0.14, 0.0, 0.16])[kind]
+    step = rng.uniform(0.0, 0.5, len(pts))
+    u = c.X * np.cos(ang[field]) + c.Y * np.sin(ang[field])
+    rows = 0.5 + 0.5 * np.cos(2 * np.pi * u / 1.6 + ph[field])
+    n = 0.5 + 0.5 * fbm(c.X, c.Y, c.seed + 51, 3, 0.07)
+    h = 0.35 * n + gaussian_filter(step[field], 1.2 / c.p.res) + amp[field] * rows * (1 - hedge) \
+        + (0.6 + 0.12 * fbm(c.X, c.Y, c.seed + 52, 2, 0.5)) * hedge
+    c.extra['field'] = (field + 1).astype(np.float32) + 0.1 * kind[field]      # integer part: id, fraction: kind
+    c.extra['hedge'] = hedge.astype(np.float32)
+    return h, 0.0
+
+
+def t_jungle(c):
+    n = 0.5 + 0.5 * fbm(c.X, c.Y, c.seed + 19, 3, 0.05, gain=0.45)
+    return 0.7 + 0.35 * t_hills(c)[0] + 0.8 * n, 0.0
+
+
 TERRAINS = dict(plains=t_plains, hills=t_hills, forest=lambda c: tuple([0.45 * t_hills(c)[0] + 0.3, 0.0]),
-                mountains=t_mountains, desert=t_desert, swamp=t_swamp, water=t_water)
+                mountains=t_mountains, desert=t_desert, swamp=t_swamp, water=t_water,
+                tundra=t_tundra, glacier=t_glacier, farmland=t_farmland, jungle=t_jungle,
+                forest_hills=lambda c: tuple([0.85 * t_hills(c)[0] + 0.3, 0.0]),
+                forest_mountains=lambda c: tuple([0.9 * t_mountains(c)[0], 0.0]))
 
 
 # ==========================================================================
 # trees
 # ==========================================================================
-def scatter_trees(c, n, p_conifer=0.7, rmin=1.5, rmax=2.9, area=17.5, tries=400):
+def scatter_trees(c, n, p_conifer=0.7, rmin=1.5, rmax=2.9, area=17.5, tries=400, maxrel=None, hmin=6.0, hmax=10.5):
     rng, parts = c.rng, []
     placed = 0
     for _ in range(tries):
@@ -162,8 +221,12 @@ def scatter_trees(c, n, p_conifer=0.7, rmin=1.5, rmax=2.9, area=17.5, tries=400)
         R = rng.uniform(rmin, rmax)
         if not c.free(x, y, R * 0.8, gap=-0.5):
             continue
+        if maxrel is not None:                      # trees keep to the lower, gentler ground
+            g0 = c.ground(x, y)
+            if g0 - c.p.base > maxrel or abs(c.ground(x + 1.2, y) - c.ground(x - 1.2, y)) + abs(c.ground(x, y + 1.2) - c.ground(x, y - 1.2)) > 2.4:
+                continue
         z = c.ground(x, y) - 0.5
-        H = rng.uniform(6.0, 10.5) * (0.75 + 0.25 * R / rmax)
+        H = rng.uniform(hmin, hmax) * (0.75 + 0.25 * R / rmax)
         if rng.rand() < p_conifer:
             t = conifer(rng, H, R, tiers=int(rng.choice([3, 4])))
         else:
@@ -178,39 +241,56 @@ def f_forest(c):
     return scatter_trees(c, 26)
 
 
+def bushes(c, n, rmin=0.8, rmax=1.3, area=17.5):
+    rng, parts = c.rng, []
+    for _ in range(n * 12):
+        if len(parts) >= n:
+            break
+        x, y = rng.uniform(-area, area, 2)
+        R = rng.uniform(rmin, rmax)
+        if not c.free(x, y, R * 0.8, margin=1.2, gap=-0.3):
+            continue
+        parts.append(broadleaf(rng, rng.uniform(2.2, 3.2), R).translate([x, y, c.ground(x, y) - 0.5]))
+        c.claim(x, y, R * 0.8)
+    return parts
+
+
+def boulders(c, n, rmin=0.5, rmax=1.1, area=17.0):
+    rng, parts = c.rng, []
+    for _ in range(n * 10):
+        if len(parts) >= n:
+            break
+        x, y = rng.uniform(-area, area, 2)
+        r = rng.uniform(rmin, rmax)
+        if c.free(x, y, r, margin=1.2, gap=-0.3):
+            parts.append(rock(rng, x, y, c.ground(x, y) - 0.15, r))
+            c.claim(x, y, r)
+    return parts
+
+
+def biome(c, terrain):
+    """trees (and undergrowth) that belong to a terrain"""
+    if terrain == 'forest':
+        return f_forest(c)
+    if terrain == 'forest_hills':
+        return scatter_trees(c, 24, p_conifer=0.8, rmin=1.4, rmax=2.6, maxrel=7.5)
+    if terrain == 'forest_mountains':
+        return scatter_trees(c, 18, p_conifer=0.95, rmin=1.3, rmax=2.3, maxrel=5.5, hmin=5.0, hmax=8.5)
+    if terrain == 'jungle':
+        return scatter_trees(c, 30, p_conifer=0.0, rmin=2.0, rmax=3.3, hmin=6.0, hmax=9.5) + bushes(c, 26)
+    if terrain == 'tundra':
+        return scatter_trees(c, 6, p_conifer=0.95, rmin=1.1, rmax=1.8, hmin=4.0, hmax=6.5) + boulders(c, 12)
+    return []
+
+
 # ==========================================================================
 # houses and villages
 # ==========================================================================
 def house(x, y, z, w, d, wh, rh, ang, pyramid=False):
-    walls = box(0, 0, -1.0, w, d, wh + 1.0)
-    door = tag(box(0, -d / 2 + 0.1, 0.1, 0.9, 0.6, 1.4), 'dark')
-    walls = walls - door
-    # window recesses (0.25 mm deep, vertical, so they print without supports)
-    ww, wz = 0.62, 0.45 * wh + 0.1
-    wht = min(0.9, 0.42 * wh)
-    for side in (-1, 1):                                  # the two long walls (the door is on -y)
-        n = max(1, int(w / 1.7))
-        for k in range(n):
-            xk = (k + 0.5) / n * w - w / 2
-            if side < 0 and abs(xk) < 0.95:
-                continue
-            walls = walls - tag(box(xk, side * (d / 2 - 0.12), wz, ww, 0.5, wht), 'dark')
-    for side in (-1, 1):                                  # gable ends
-        walls = walls - tag(box(side * (w / 2 - 0.12), 0, wz, 0.5, ww, wht), 'dark')
-    walls = tag(walls, 'plaster')
-    eave = 0.35
-    if pyramid:
-        roof = pyramid_roof(w + 2 * eave, d + 2 * eave, rh)
-    elif w >= d:
-        roof = gable_roof(d, w + 2 * eave, rh, eave).rotate([0, 0, 90])
-    else:
-        roof = gable_roof(w, d + 2 * eave, rh, eave)
-    roof = tag(roof, 'roof')
-    m = walls + roof.translate([0, 0, wh - 0.05])
-    if not pyramid and int(abs(x * 10 + y * 7)) % 3 != 0:       # chimney through the ridge
-        cx = (0.27 if w >= d else 0.0) * w
-        cy = (0.0 if w >= d else 0.27) * d
-        m = m + box(cx, cy, wh - 0.1, 0.5, 0.5, rh + 0.75)
+    """a plain house for the tiles that scatter a few buildings (harbour, mine, lighthouse)"""
+    rng = np.random.RandomState(int(abs(x * 100 + y * 37)) % 2 ** 31)
+    m = townhouse(rng, w, d, floors=2 if wh > 2.5 else 1, jetty=wh > 2.5, ridge='x' if w >= d else 'y', rh=rh,
+                  timber=wh > 2.5 and rng.rand() < 0.5, thatch=rng.rand() < 0.3)
     return m.rotate([0, 0, ang]).translate([x, y, z])
 
 
@@ -244,9 +324,7 @@ def pack_houses(c, n, size=(3.0, 4.6, 2.4, 3.6), wh=(2.0, 2.8), rh=(1.4, 2.2),
 
 
 def f_village(c):
-    parts = pack_houses(c, 8)
-    parts += scatter_trees(c, 8, p_conifer=0.3, rmin=1.4, rmax=2.2)
-    return parts
+    return village_parts(c)
 
 
 # ==========================================================================
@@ -266,36 +344,7 @@ def wall_ring(inner_a, thick, height, gates, gate_w=5.0, z0=0.0):
 
 
 def f_city(c):
-    wall_a, th, wh = 15.0, 1.1, 3.6
-    gates = c.exits
-    parts = [wall_ring(wall_a, th, wh, gates, z0=c.ground(0, 0))]
-    zc = c.ground(0, 0)
-    vr = (wall_a + th / 2) / np.cos(30 * DEG)
-    for k in range(6):
-        ang = (30 + 60 * k) * DEG
-        parts.append(tower(vr * np.cos(ang), vr * np.sin(ang), zc, 1.5, 7.0, 2.8))
-    for e in gates:                      # gate-house towers flank each gate
-        for s in (-1, 1):
-            ang = 60 * e * DEG
-            gx = (wall_a + th / 2) * np.cos(ang) - s * 3.0 * np.sin(ang)
-            gy = (wall_a + th / 2) * np.sin(ang) + s * 3.0 * np.cos(ang)
-            parts.append(tower(gx, gy, zc, 1.1, 5.6, 2.0))
-    inner = lambda x, y: hexdist(np.array(x), np.array(y)) < wall_a - 1.4
-    # a minster / keep somewhere near the middle
-    rng = c.rng
-    for _ in range(80):
-        ang, rad = rng.uniform(0, 2 * np.pi), rng.uniform(4.5, 8)
-        x, y = rad * np.cos(ang), rad * np.sin(ang)
-        if c.free(x, y, 3.6):
-            a0 = np.degrees(ang) + 90
-            nave = box(0, 0, -1.0, 7.0, 3.4, 5.0) + tag(gable_roof(3.4, 7.8, 2.0, 0.4), 'roof').rotate([0, 0, 90]).translate([0, 0, 4.0 - 0.05])
-            spire = box(-3.0, 0, -1.0, 2.2, 2.2, 9.0) + tag(pyramid_roof(3.0, 3.0, 3.6), 'roof').translate([-3.0, 0, 8.0 - 0.05])
-            parts.append((nave + spire).rotate([0, 0, a0]).translate([x, y, c.ground(x, y)]))
-            c.claim(x, y, 4.2)
-            break
-    parts += pack_houses(c, 24, size=(2.3, 3.4, 2.1, 3.0), wh=(1.8, 3.0), rh=(1.2, 1.8),
-                         radius=wall_a, tries=1500, extra_free=inner)
-    return parts
+    return city_parts(c)
 
 
 # ==========================================================================
@@ -808,6 +857,15 @@ def add_cascade(c, Z):
 # ==========================================================================
 # the builder
 # ==========================================================================
+def _weld_ok(m):
+    """watertight after welding exact float32 coordinates, the way a slicer does"""
+    mm = m.to_mesh()
+    tri = np.asarray(mm.vert_properties, np.float32)[:, :3][np.asarray(mm.tri_verts)]
+    u, inv = np.unique(tri.reshape(-1, 3), axis=0, return_inverse=True)
+    w = trimesh.Trimesh(u.astype(np.float64), inv.reshape(-1, 3), process=False)
+    return bool(w.is_watertight)
+
+
 def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
                p=None, bridge=False, ford=False, water=None, cascade=False, style=None):
     p = p or Params()
@@ -825,6 +883,14 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         wr = np.random.RandomState(seed + 303)
         if water['kind'] == 'coast':
             c.water_s = coast_signed(c, water['edges'], wr, p.organic)
+            if water.get('mirror'):             # the same shore, reflected about the axis through the water edges
+                e = water['edges']
+                th = np.radians(60 * (e[0] + (len(e) - 1) / 2.0))
+                u = np.array([np.cos(th), np.sin(th)])
+                dot = c.X * u[0] + c.Y * u[1]
+                Xr, Yr = 2 * dot * u[0] - c.X, 2 * dot * u[1] - c.Y
+                itp = RegularGridInterpolator((c.ys, c.xs), c.water_s, bounds_error=False, fill_value=None)
+                c.water_s = itp(np.stack([Yr.ravel(), Xr.ravel()], 1)).reshape(c.X.shape)
             land_edges = [i for i in range(6) if i not in water['edges']]
         elif water['kind'] == 'island':        # land in the middle, open water to every edge
             c.water_s = -pond_signed(c, wr, p.organic, r0=9.5)
@@ -852,6 +918,8 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         else:
             c.road = PathNet.from_exits(road, p.a, rng=np.random.RandomState(seed + 101),
                                         organic=0.6 * org_road, wamp=0.10)
+    if feature == 'city' and c.road is not None:
+        c.road = city_streets(c, c.road)           # main streets plus side lanes, cathedral site reserved
     if river:
         end = None
         if water and water['kind'] == 'coast' and len(river) == 1:       # river mouth: run on into the sea
@@ -924,30 +992,49 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         parts += FEATURES[feature]['parts'](c)
         if feature in ('dungeon', 'mine') and getattr(c, 'carve', None) is not None:
             tile = tile - c.carve
-    if terrain == 'forest':
-        parts += f_forest(c)
+    parts += biome(c, terrain)
     if bridge:
         parts += bridge_parts(c, 60.0 * river_cross_edge(road))
-    if parts:
-        feat = union(parts)
-        feat = feat ^ tag(hex_prism(p.a - 0.05, 80.0, 0.5), 'base')       # nothing may poke past the tile edge
-        if feature in ('dungeon', 'mine') and getattr(c, 'carve', None) is not None:
-            feat = feat - c.carve
-        tile = tile + feat
-    tile = tile.simplify(0.001)
-    comps = tile.decompose()
-    if len(comps) > 1:                 # drop dust / zero-volume slivers left by boolean ops
-        keep = [m for m in comps if m.volume() > 1.0]
-        tile = union(keep)
+    base_tile = tile
+    first = None
+    for attempt in range(8):
+        # Parts that only touch along a line or a point (roof edge on roof edge) make a pinched, non-manifold
+        # edge once a slicer welds the vertices.  If the plain build fails that check, every part is shifted by
+        # a few microns (seeded, far below printer resolution) and the build is retried with fresh shifts.
+        # A retry is accepted only if it is watertight and still a single body.
+        jr = np.random.RandomState(seed * 31 + attempt)
+        tile = base_tile
+        if parts:
+            jit = (lambda q: q) if attempt == 0 else (lambda q: q.translate(jr.uniform(-0.004, 0.004, 3)))
+            feat = union([jit(q) for q in parts])
+            feat = feat ^ tag(hex_prism(p.a - 0.05, 80.0, 0.5), 'base')       # nothing may poke past the tile edge
+            if feature in ('dungeon', 'mine') and getattr(c, 'carve', None) is not None:
+                feat = feat - c.carve
+            tile = base_tile + feat
+        tile = tile.simplify(0.004)
+        comps = tile.decompose()
+        if len(comps) > 1:                 # drop dust / zero-volume slivers left by boolean ops
+            keep = [m for m in comps if m.volume() > 1.0]
+            tile = union(keep)
+            one_body = len(keep) == 1
+        else:
+            one_body = True
+        if first is None:
+            first = tile
+        if _weld_ok(tile) and (attempt == 0 or one_body):
+            break
+    else:
+        tile = first
     out = to_trimesh(tile)
     out.metadata['grid'] = dict(xs=c.xs.astype(np.float32), ys=c.ys.astype(np.float32),
-                                Z=Z.astype(np.float32), road=rm_grid, ground=GROUND.get(terrain, 'grass'),
+                                Z=Z.astype(np.float32), road=rm_grid, ground=GROUND.get(terrain, 'grass'), paved=(feature == 'city'), **c.extra,
                                 water=bool(water) or terrain == 'water' or river is not None)
     return out
 
 
 GROUND = {'desert': 'sand', 'swamp': 'swamp', 'forest': 'forest', 'hills': 'hills', 'mountains': 'mountain',
-          'plains': 'grass', 'water': 'grass'}
+          'plains': 'grass', 'water': 'grass', 'tundra': 'tundra', 'glacier': 'ice', 'farmland': 'farmland',
+          'jungle': 'jungle', 'forest_hills': 'forest', 'forest_mountains': 'mountain'}
 
 
 def river_cross_edge(road):
