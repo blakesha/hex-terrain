@@ -91,6 +91,9 @@ def catalogue():
     cat['city_1'] = dict(terrain='plains', feature='city', road=[0], seed=21)
     cat['city_2'] = dict(terrain='plains', feature='city', road=[0, 3], seed=22)
     cat['city_3'] = dict(terrain='plains', feature='city', road=[0, 2, 4], seed=23)
+    cat['village_farm_0'] = dict(terrain='farmland', feature='village', seed=13)
+    cat['village_farm_1'] = dict(terrain='farmland', feature='village', road=[0], seed=13)
+    cat['village_farm_2'] = dict(terrain='farmland', feature='village', road=[0, 3], seed=14)
     cat['fort_1'] = dict(terrain='plains', feature='fort', road=[0], seed=31)
     cat['temple_0'] = dict(terrain='plains', feature='temple', seed=41)
     cat['temple_1'] = dict(terrain='plains', feature='temple', road=[0], seed=41)
@@ -119,6 +122,36 @@ def catalogue():
         cat[f'road_fork_t_{t}_mirror'] = dict(terrain=t, road=[0, 5, 3], seed=3)
     for t in ('plains', 'hills', 'forest'):
         cat[f'river_fork_t_{t}_mirror'] = dict(terrain=t, river=[0, 5, 3], seed=4)
+    # --- terrains added to the original seven ---------------------------------------------------
+    NEW = ('tundra', 'glacier', 'jungle', 'farmland', 'forest_hills', 'forest_mountains')
+    for i, t in enumerate(NEW):
+        cat[t] = dict(terrain=t, seed=1)
+        cat[t + '_b'] = dict(terrain=t, seed=7)
+    for t in ('swamp', 'tundra', 'jungle', 'farmland', 'forest_hills'):               # roads over the rest
+        for pat, ex in PATTERNS.items():
+            cat[f'road_{pat}_{t}'] = dict(terrain=t, road=ex, seed=3)
+        cat[f'road_fork_t_{t}_mirror'] = dict(terrain=t, road=[0, 5, 3], seed=3)
+    for t in ('desert', 'swamp', 'tundra', 'jungle', 'farmland', 'forest_hills'):     # rivers over the rest
+        for pat, ex in PATTERNS.items():
+            cat[f'river_{pat}_{t}'] = dict(terrain=t, river=ex, seed=4)
+        cat[f'river_fork_t_{t}_mirror'] = dict(terrain=t, river=[0, 5, 3], seed=4)
+    for pat in ('straight', 'curve_gentle', 'fork_y'):
+        cat[f'road_{pat}_forest_mountains'] = dict(terrain='forest_mountains', road=PATTERNS[pat], seed=3)
+        cat[f'river_{pat}_forest_mountains'] = dict(terrain='forest_mountains', river=PATTERNS[pat], seed=4)
+    for n in (1, 2, 3, 4, 5):
+        cat[f'coast_{n}_mountains'] = dict(terrain='mountains', water=dict(kind='coast', edges=list(range(n))), seed=60 + n)
+    # mirrored coasts (the shore reflected about its axis) and river mouths on the other side
+    for n in (2, 3, 4):
+        for t in ('plains', 'hills', 'forest', 'mountains'):
+            cat[f'coast_{n}_{t}_mirror'] = dict(terrain=t, water=dict(kind='coast', edges=list(range(n)), mirror=True), seed=60 + n)
+        for t in ('plains', 'hills', 'forest'):
+            cat[f'cliff_coast_{n}_{t}_mirror'] = dict(terrain=t, style='cliff', water=dict(kind='coast', edges=list(range(n)), mirror=True), seed=90 + n)
+        cat[f'sand_coast_{n}_mirror'] = dict(terrain='desert', style='sand', water=dict(kind='coast', edges=list(range(n)), mirror=True), seed=100 + n)
+        cat[f'marsh_coast_{n}_mirror'] = dict(terrain='swamp', water=dict(kind='coast', edges=list(range(n)), mirror=True), seed=110 + n)
+    for n, rv in ((2, 3), (3, 4)):
+        for t in ('plains', 'hills', 'forest'):
+            cat[f'coast_{n}_river_{t}_mirror'] = dict(terrain=t, river=[rv], water=dict(kind='coast', edges=list(range(n)), mirror=True), seed=60 + n)
+        cat[f'cliff_coast_{n}_river_hills_mirror'] = dict(terrain='hills', style='cliff', river=[rv], water=dict(kind='coast', edges=list(range(n)), mirror=True), seed=90 + n)
     cat['ruins_plains'] = dict(terrain='plains', feature='ruins', seed=81)
     cat['ruins_forest'] = dict(terrain='forest', feature='ruins', seed=82)
     cat['ruins_road_plains'] = dict(terrain='plains', feature='ruins', road=[0, 3], seed=83)

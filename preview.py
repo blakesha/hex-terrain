@@ -14,7 +14,7 @@ import numpy as np
 import trimesh
 from PIL import Image, ImageDraw
 
-MATERIALS = ['stone', 'terrain', 'base', 'conifer', 'broadleaf', 'roof', 'plaster', 'wood', 'rock', 'dark']
+MATERIALS = ['stone', 'terrain', 'base', 'conifer', 'broadleaf', 'roof', 'plaster', 'wood', 'rock', 'dark', 'thatch']
 M = {n: i for i, n in enumerate(MATERIALS)}
 SMOOTH = {M['terrain']: 1, M['conifer']: 2, M['broadleaf']: 2, M['rock']: 3}     # material -> smoothing group
 SUN = np.array([-0.45, -0.60, 0.66]); SUN /= np.linalg.norm(SUN)
@@ -101,16 +101,22 @@ class Tile:
         self.mat = None
         self.grid = None
         self.ground = 'grass'
+        self.paved = False
         if os.path.exists(side):
             d = np.load(side)
             if len(d['mat']) == len(self.F):
                 self.mat = d['mat'].astype(np.int64)
                 if 'Z' in d.files:
                     from scipy.ndimage import distance_transform_edt
-                    wet = d['Z'] < WATER_LEVEL
-                    shore = distance_transform_edt(wet) * float(d['xs'][1] - d['xs'][0]) if wet.any() and not wet.all() else np.full(wet.shape, 9.0)
-                    self.grid = (d['xs'] + offset[0], d['ys'] + offset[1], d['Z'], d['road'], shore)
+                    g = {k: d[k] for k in d.files if k not in ('mat', 'names', 'ground', 'water', 'paved')}
+                    g['xs'] = g['xs'] + offset[0]
+                    g['ys'] = g['ys'] + offset[1]
+                    wet = g['Z'] < WATER_LEVEL
+                    g['shore'] = (distance_transform_edt(wet) * float(g['xs'][1] - g['xs'][0])
+                                  if wet.any() and not wet.all() else np.full(wet.shape, 9.0))
+                    self.grid = g
                     self.ground = str(d['ground'])
+                    self.paved = bool('paved' in d.files and d['paved'])
         if self.mat is None:                      # no sidecar: flat things at the bottom are base, the rest terrain
             c = self.V[self.F].mean(1)
             fn = np.cross(self.V[self.F[:, 1]] - self.V[self.F[:, 0]], self.V[self.F[:, 2]] - self.V[self.F[:, 0]])
@@ -273,7 +279,7 @@ def ambient_occlusion(P, N, occ, strength=1.0):
 # ---------------------------------------------------------------------------------------------
 # materials: albedo (linear) and, for water, a reflectivity flag
 # ---------------------------------------------------------------------------------------------
-def tile_lookup(tiles, tid, P, which):
+def tile_lookup(tiles, tid, P, which, nearest=False):
     """terrain height / road weight under points P, from the sidecar grids (NaN if unknown)"""
     out = np.full(len(P), np.nan)
     for k, t in enumerate(tiles):
@@ -282,11 +288,15 @@ def tile_lookup(tiles, tid, P, which):
         sel = tid == k
         if not sel.any():
             continue
-        xs, ys, Z, road, shore = t.grid
-        g = {'z': Z, 'road': road, 'shore': shore}[which]
+        if which not in t.grid:
+            continue
+        xs, ys, g = t.grid['xs'], t.grid['ys'], t.grid[which]
         fx = np.clip((P[sel, 0] - xs[0]) / (xs[1] - xs[0]), 0, len(xs) - 1.001)
         fy = np.clip((P[sel, 1] - ys[0]) / (ys[1] - ys[0]), 0, len(ys) - 1.001)
         i, j = fx.astype(int), fy.astype(int)
+        if nearest:
+            out[sel] = g[np.rint(fy).astype(int).clip(0, len(ys) - 1), np.rint(fx).astype(int).clip(0, len(xs) - 1)]
+            continue
         u, v = fx - i, fy - j
         out[sel] = (g[j, i] * (1 - u) + g[j, i + 1] * u) * (1 - v) + (g[j + 1, i] * (1 - u) + g[j + 1, i + 1] * u) * v
     return out
@@ -300,9 +310,15 @@ def shade_materials(P, N, mat, tid, tiles):
     x, y, z = P[:, 0], P[:, 1], P[:, 2]
     nz = N[:, 2]
     gnd = np.array([t.ground for t in tiles])[tid]
-    gz = tile_lookup(tiles, tid, P, 'z')
+    gz = tile_lookup(tiles, tid, P, 'Z')
     road = tile_lookup(tiles, tid, P, 'road')
     shore = tile_lookup(tiles, tid, P, 'shore')
+    urban = tile_lookup(tiles, tid, P, 'urban')
+    fieldv = tile_lookup(tiles, tid, P, 'field', nearest=True)
+    hedge = tile_lookup(tiles, tid, P, 'hedge')
+    crev = tile_lookup(tiles, tid, P, 'crev')
+    plaza = tile_lookup(tiles, tid, P, 'plaza')
+    paved = np.array([t.paved for t in tiles])[tid]
     N = N.copy()
 
     # ---- terrain ---------------------------------------------------------------------------
@@ -320,13 +336,27 @@ def shade_materials(P, N, mat, tid, tiles):
         swamp = mix(swamp, col(0.12, 0.085, 0.05), sstep(0.55, 0.75, mid) * 0.8)       # mud
         forest = mix(col(0.07, 0.13, 0.04), col(0.15, 0.20, 0.07), sstep(0.3, 0.7, big))
         hills = mix(col(0.14, 0.23, 0.06), col(0.28, 0.32, 0.10), sstep(0.35, 0.65, big))
-        ground = np.where((g == 'sand')[:, None], sand, np.where((g == 'swamp')[:, None], swamp,
-                 np.where((g == 'forest')[:, None], forest, np.where((g == 'hills')[:, None], hills, grass))))
+        tundra = mix(col(0.15, 0.145, 0.08), col(0.27, 0.25, 0.15), sstep(0.3, 0.7, big))
+        tundra = mix(tundra, col(0.42, 0.40, 0.33), sstep(0.6, 0.8, mid) * 0.5)                   # lichen
+        jungle = mix(col(0.035, 0.11, 0.03), col(0.09, 0.20, 0.05), sstep(0.3, 0.7, big))
+        ice = mix(col(0.25, 0.40, 0.53), col(0.44, 0.57, 0.67), sstep(0.3, 0.75, big))
+        ice = mix(ice, col(0.05, 0.17, 0.32), sstep(0.15, 0.7, np.nan_to_num(crev[s], nan=0.0)) * 0.9)     # crevasse blue
+        fid = np.floor(np.nan_to_num(fieldv[s], nan=0.0))
+        kd = np.rint((np.nan_to_num(fieldv[s], nan=0.0) - fid) * 10).astype(int) % 4
+        crop = np.array([[0.20, 0.13, 0.075], [0.10, 0.22, 0.05], [0.13, 0.23, 0.065], [0.40, 0.31, 0.10]])[kd]
+        crop = crop * (0.82 + 0.34 * _hash(fid, 0 * fid, 17.0))[:, None] * (0.85 + 0.3 * fine)[:, None]
+        farm = np.where(np.isnan(fieldv[s])[:, None], grass, crop)
+        hg = np.nan_to_num(hedge[s], nan=0.0)
+        farm = mix(farm, mix(col(0.035, 0.09, 0.03), col(0.08, 0.17, 0.045), fine), sstep(0.35, 0.7, hg))
+        ground = grass
+        for nm, cc in (('sand', sand), ('swamp', swamp), ('forest', forest), ('hills', hills), ('tundra', tundra),
+                       ('jungle', jungle), ('ice', ice), ('farmland', farm)):
+            ground = np.where((g == nm)[:, None], cc, ground)
         ground = ground * (0.82 + 0.36 * fine)[:, None]
         # rock: steep faces, and altitude on mountains
         rel = zs - 5.0
         slope = 1 - nzs
-        rock_amt = sstep(0.16, 0.34, slope)
+        rock_amt = sstep(0.16, 0.34, slope) * np.where((g == 'ice') | (g == 'farmland'), 0.0, 1.0)
         rock_amt = np.maximum(rock_amt, np.where(g == 'mountain', sstep(2.5, 7.0, rel + 2.2 * (mid - 0.5)), 0.0))
         strata = fbm3(xs * 0.8, ys * 0.8, zs * 0.8, 21, 2)
         band = 0.5 + 0.5 * np.sin(zs * 5.0 + 3.0 * strata)
@@ -334,6 +364,9 @@ def shade_materials(P, N, mat, tid, tiles):
         redrock = mix(col(0.46, 0.27, 0.18), col(0.62, 0.40, 0.26), 0.4 * band + 0.6 * fine)
         rock = np.where((g == 'sand')[:, None], redrock, rock)
         a = mix(ground, rock, rock_amt)
+        # tundra snow patches
+        tsn = sstep(0.60, 0.72, big + 0.25 * (mid - 0.5)) * sstep(0.35, 0.12, slope) * (g == 'tundra')
+        a = mix(a, col(0.80, 0.83, 0.87) * (0.9 + 0.1 * fine)[:, None], np.clip(tsn, 0, 1))
         # snow
         snow_line = 15.6 + 2.5 * (mid - 0.5)
         snow = sstep(snow_line - 0.5, snow_line + 0.9, zs) * sstep(0.28, 0.12, slope) * (g == 'mountain')
@@ -344,6 +377,20 @@ def shade_materials(P, N, mat, tid, tiles):
         rd = np.where(np.isnan(rd), 0.0, rd)
         dirt = mix(col(0.40, 0.31, 0.20), col(0.52, 0.43, 0.30), fine)
         a = mix(a, dirt, sstep(0.35, 0.75, rd) * (1 - sstep(0.12, 0.3, slope)))
+        # trodden earth in towns and yards, cobbles on paved streets
+        ub = np.nan_to_num(urban[s], nan=0.0)
+        earth = mix(col(0.20, 0.155, 0.10), col(0.30, 0.25, 0.17), fine)
+        a = mix(a, earth, sstep(0.25, 0.8, ub) * (1 - sstep(0.2, 0.4, slope)) * 0.9)
+        plz = np.nan_to_num(plaza[s], nan=0.0)
+        pv = paved[s] & ((rd > 0.3) | (plz > 0.3))
+        rd = np.maximum(rd, plz)
+        if pv.any():
+            cx, cy = xs[pv] * 2.6, ys[pv] * 2.6 + 0.5 * np.floor(xs[pv] * 2.6)
+            fx_, fy_ = cx - np.floor(cx), cy - np.floor(cy)
+            gap = np.maximum(sstep(0.12, 0.02, np.minimum(fx_, 1 - fx_)), sstep(0.12, 0.02, np.minimum(fy_, 1 - fy_)))
+            cob = col(0.30, 0.285, 0.26) * (0.7 + 0.6 * _hash(np.floor(cx), np.floor(cy), 29.0))[:, None]
+            cob = mix(cob, cob * 0.35, gap)
+            a[pv] = mix(a[pv], cob, sstep(0.3, 0.6, rd[pv]))
         # wet banks: just above the water line
         lvl = zs
         wet = sstep(WATER_LEVEL + 0.55, WATER_LEVEL, lvl) * sstep(5.5, 5.0, zs)
@@ -382,6 +429,7 @@ def shade_materials(P, N, mat, tid, tiles):
         tint = fbm(x[s] * 0.35, y[s] * 0.35, 53)
         a = mix(lo, hi, np.clip(0.25 + 0.75 * clump, 0, 1))
         a = a * (0.85 + 0.3 * tint)[:, None]
+        a = np.where((gnd[s] == 'jungle')[:, None], a * np.array([0.55, 0.78, 0.6]), a)
         trunk = sstep(1.35, 0.95, above)
         a = mix(a, mix(col(0.18, 0.11, 0.06), col(0.26, 0.17, 0.09), clump), trunk)
         alb[s] = a
@@ -394,6 +442,10 @@ def shade_materials(P, N, mat, tid, tiles):
             Ns[:, ax] -= (fbm3((x[s] + d[0]) * k, (y[s] + d[1]) * k, (z[s] + d[2]) * k, 161, 2) - b0) / e * 0.09
         N[s] = Ns / np.linalg.norm(Ns, axis=1, keepdims=True)
 
+    s = mat == M['thatch']
+    if s.any():
+        st = fbm3(x[s] * 1.5, y[s] * 1.5, z[s] * 6.0, 171, 3)
+        alb[s] = mix(col(0.30, 0.21, 0.07), col(0.58, 0.45, 0.17), st)
     s = mat == M['dark']
     if s.any():
         alb[s] = col(0.025, 0.02, 0.018) * (0.7 + 0.6 * fbm3(x[s] * 3, y[s] * 3, z[s] * 3, 151))[:, None]
@@ -545,7 +597,7 @@ def render_scene(tiles, size=420, az=-35, el=42, ssaa=2, span=25.0, exposure=0.8
         foam = sstep(0.55, 0.05, sd) * (0.55 + 0.45 * vnoise(P[water, 0] * 5.0, P[water, 1] * 5.0, 141))
         wc = mix(wc, col(0.55, 0.60, 0.58) * (0.5 + 0.5 * vis[water][:, None]), foam * 0.6)
         color[water] = wc
-    sheen = (mt == M['roof']) | (mt == M['wood'])
+    sheen = (mt == M['roof']) | (mt == M['wood']) | ((mt == M['terrain']) & np.array([t.ground == 'ice' for t in tiles])[tid])
     color[sheen] += (SUN_COL[None, :] * (ndh[sheen] ** 30 * vis[sheen] * 0.07)[:, None])
     img[cov] = color
 
@@ -579,7 +631,7 @@ def main():
         for t in tiles:
             t.V[:, 0] -= cx; t.V[:, 1] -= cy
             if t.grid is not None:
-                t.grid = (t.grid[0] - cx, t.grid[1] - cy) + t.grid[2:]
+                t.grid['xs'] = t.grid['xs'] - cx; t.grid['ys'] = t.grid['ys'] - cy
         render_scene(tiles, **kw).save(a.out)
         print('wrote', a.out)
         return

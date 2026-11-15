@@ -8,14 +8,14 @@ tiles at every angle, so you can lay out a map on the table and rebuild it any w
 
 ![Sample tiles](previews/overview.png)
 
-The repository holds the generator, not the STL files. Run it once and you get 173 ready-to-slice
+The repository holds the generator, not the STL files. Run it once and you get 322 ready-to-slice
 STLs in about 30 seconds.
 
 ## Quick start
 
 ```
 pip install numpy scipy trimesh manifold3d pillow matplotlib
-python3 generate.py --set all          # writes 173 STLs to ./stl
+python3 generate.py --set all          # writes 322 STLs to ./stl
 python3 validate.py stl                # printability report
 python3 preview.py sheet.png stl/*.stl --cols 4      # shaded renders, see "Renders" below
 ```
@@ -26,21 +26,25 @@ Requires Python 3.9+. No GPU or CAD program is needed; previews are software-ren
 
 | Group | Tiles |
 |---|---|
-| Terrain | plains, hills, mountains, forest, desert, swamp, water (hills, mountains and forest also have a second variant, `_b`) |
-| Roads | dead end, straight, gentle curve, sharp curve, Y-fork, T-fork, crossroads, on plains, hills, forest and desert |
-| Rivers | the same seven patterns, on plains, hills and forest |
+| Terrain | plains, hills, mountains, forest, desert, swamp, water, and `tundra` (hummocks, boulders, stunted conifers, snow patches), `glacier` (crevassed ice), `jungle` (dense broadleaf canopy with undergrowth), `farmland` (a patchwork of ploughed, cropped, wheat and pasture fields with hedgerows), `forest_hills` and `forest_mountains` (trees on the lower, gentler ground). Most have a second variant, `_b` |
+| Roads | dead end, straight, gentle curve, sharp curve, Y-fork, T-fork, crossroads, on plains, hills, forest, desert, swamp, tundra, jungle, farmland and forest hills (and `pass_*` over mountains, `road_*_forest_mountains`) |
+| Rivers | the same seven patterns, on plains, hills, forest, desert, swamp, tundra, jungle, farmland and forest hills (and `gorge_*` through mountains) |
 | Crossings | bridge, ford |
-| Coasts | water on 1 to 5 edges (cove, corner, straight shore, bay, cape), on plains, hills and forest; plus river mouths that run into the sea |
+| Coasts | water on 1 to 5 edges (cove, corner, straight shore, bay, cape), on plains, hills, forest and mountains; plus river mouths that run into the sea. `_mirror` tiles carry the shore reflected the other way (2, 3 and 4 water edges, every coast style, and the river mouths) |
 | Lakes | a pond in the middle of a tile, with 0 to 3 rivers running through it, on plains and forest |
-| Villages | no road, road ends, road passes through |
-| Walled cities | one, two (opposite) or three gates |
+| Villages | no road (houses round a green and well), road ends, road passes through; also on farmland (`village_farm_*`). Each has a church with a spire, cottages, long-houses, L-shaped houses and barns (thatch or tile, some half-timbered and jettied), back gardens with walls or hedges, beds and orchards, haystacks |
+| Walled cities | one, two (opposite) or three gates. Crenellated walls with round towers, gatehouses with lintels, terraced three-storey townhouses along cobbled streets and side lanes (jetties, half-timbering, chimneys), a market square with fountain and stalls, and a cruciform cathedral with crossing spire and twin west towers |
 | Other features | fort, classical temple, ziggurat, dungeon entrance cut into a hill (each with and without a road where it makes sense) |
 | Ruins, mine, stones, tower | `ruins_*` (broken walls, columns, an arch), `mine_1` (timber-framed adit, ore cart, spoil heap), `stones_*` (stone circle with trilithon and altar), `watchtower_*` (tower on a walled mound) |
 | Harbours | `harbour_0/1`: a coast tile with quay, stone jetty, bollards, moored boats and houses |
 | Coast styles | `cliff_coast_N_*` (steep plateau edge, plus a river-mouth variant), `sand_coast_N` (desert beach), `marsh_coast_N` (swamp shore) |
 | Islands | `island_plains/hills/forest` and `island_lighthouse`: land in the middle, water on every edge |
 | Mountains | `waterfall_mountains` (stepped stream down a flank into the river), `pass_*_mountains` (roads through the peaks), `gorge_*_mountains` (rivers) |
-| Mirrored forks | `road_fork_t_*_mirror` and `river_fork_t_*_mirror`, the other hand |
+| Mirrored forks | `road_fork_t_*_mirror` and `river_fork_t_*_mirror`, the other hand (every terrain that has them) |
+
+![New terrains: tundra, glacier, jungle, farmland, forested hills and mountains](previews/terrains2.png)
+![Villages and walled cities](previews/towns.png)
+![Roads and rivers over the newer terrains](previews/more_paths.png)
 
 Name pattern: `road_curve_gentle_forest`, `river_fork_y_hills`, `village_2`, `city_3` and so on.
 The number on features is how many road exits the tile has.
@@ -76,6 +80,7 @@ tile and tiles the hex lattice, so it continues unbroken across shared edges.
 ## Coasts and lakes
 
 ![Coasts and river mouths](previews/coasts.png)
+![Mirrored coasts](previews/mirrored_coasts.png)
 
 **Coasts** are land tiles where open water reaches whole edges. `coast_N_<terrain>` has water on its first
 `N` edges (edges 0 to N-1) and land on the rest: `coast_1` is a cove, `coast_2` a corner, `coast_3` a straight
@@ -161,7 +166,7 @@ Pockets sit below the lowest surface at every edge, so rivers never break into t
    colonnades and stairs are built from primitives and merged with the terrain using the
    [manifold3d](https://github.com/elalish/manifold) boolean engine. Trees and buildings are placed
    by rejection sampling so they never sit on roads, rivers or each other, and stay inside the tile.
-5. **Cleanup and checks.** Meshes are welded the way a slicer would weld them, zero-volume slivers
+5. **Cleanup and checks.** If a slicer-style weld would pinch two parts that touch along a line, the builder shifts every part by a few microns and retries.  Meshes are welded the way a slicer would weld them, zero-volume slivers
    from boolean operations are removed, and each tile is checked to be a single watertight solid.
 
 ## Files
@@ -169,7 +174,8 @@ Pockets sit below the lowest surface at every edge, so rivers never break into t
 | File | Purpose |
 |---|---|
 | `generate.py` | tile catalogue and command line; writes STLs |
-| `tiles.py` | terrain functions, features (village, city, fort, temples, dungeon), the tile builder |
+| `tiles.py` | terrain functions, features (fort, temples, dungeon, ruins ...), the tile builder |
+| `buildings.py` | houses, church, cathedral, towers, gardens, and the street and plot layout of villages and cities |
 | `hexlib.py` | noise, hex geometry, path networks, heightfield-to-solid, tree and roof primitives |
 | `plate.py` | packs tiles on a hex lattice for your bed: `python3 plate.py "stl/road_*_plains.stl" --bed 256 256 --gap 3` writes `plates/plate_01.stl` and a listing |
 | `multicolour.py` | splits tiles at a height for snow caps: `python3 multicolour.py stl/mountains.stl --z 14` writes `_body` and `_cap` STLs |
@@ -198,16 +204,17 @@ there; to add a new feature, write a function in `tiles.py` and register it in `
 
 - Buildings, trees and walls are fixed size in millimetres, so `--flat` larger than 40 mm gives
   more empty space rather than bigger buildings
-- Roads over mountains and swamp, and rivers over desert, mountains and swamp, are not in the default set
+- Roads and rivers over glacier, and rivers over mountains other than the `gorge_*` and `forest_mountains` ones, are not in the default set
   (the generator supports them)
+- City and village buildings add many small flat overhangs (eaves, jetties, gate lintels): `validate.py` reports about 130-185 mm2 for a city.
+  They are 0.3 mm or a short bridge, but print cities at 0.12 mm layers and turn on bridging or supports for the gate lintels if the slicer complains
 - The waterfall is a stepped channel (about 1.4 mm steps) rather than a sheer drop; paint or use clear filament for the water
-- Coasts come in one orientation per shape (water on the first N edges); rotate the print. The shoreline of
-  a mirrored coast is not generated, so a `coast_2` or `coast_3` is the same handedness everywhere
+- Coasts come in one orientation per shape (water on the first N edges); rotate the print. Use the `_mirror` tile for the other handedness
 - Not every tile has been test-printed; the meshes pass the geometric checks above
 
 ## Ideas
 
-- Mirrored coasts, so both handedness of shore are available
+- Cities and villages on other terrains (hills, forest, desert), and a harbour on the mirrored coasts
 - Harbours on other coast shapes, and more mountain features (passes with bridges)
 - Per-material colour splits for multi-colour printing: the material tags in `.mat.npz` already say which
   triangles are grass, rock, water, roofs, trunks, so the exporter is a small step (`multicolour.py` only cuts at a height for now)

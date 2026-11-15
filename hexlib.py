@@ -225,7 +225,7 @@ def to_manifold(mesh):
 # material tags: a part is tagged by giving it its own manifold "original id"; the id survives every
 # boolean, so each triangle of the finished tile can be traced back to the part it came from.
 # Anything untagged (walls, towers, columns, quays ...) counts as stone.
-MATERIALS = ['stone', 'terrain', 'base', 'conifer', 'broadleaf', 'roof', 'plaster', 'wood', 'rock', 'dark']
+MATERIALS = ['stone', 'terrain', 'base', 'conifer', 'broadleaf', 'roof', 'plaster', 'wood', 'rock', 'dark', 'thatch']
 _TAGS = {}
 
 
