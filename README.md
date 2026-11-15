@@ -14,10 +14,10 @@ STLs in about 30 seconds.
 ## Quick start
 
 ```
-pip install numpy scipy trimesh manifold3d pillow
+pip install numpy scipy trimesh manifold3d pillow matplotlib
 python3 generate.py --set all          # writes 173 STLs to ./stl
 python3 validate.py stl                # printability report
-python3 preview.py sheet.png stl/*.stl --cols 4
+python3 preview.py sheet.png stl/*.stl --cols 4      # shaded renders, see "Renders" below
 ```
 
 Requires Python 3.9+. No GPU or CAD program is needed; previews are software-rendered.
@@ -95,7 +95,7 @@ out of the pond. Their river edges are the standard river profile, so they join 
 
 - Pointy-top hexagon, **40 mm flat-to-flat**, printed 0.2 mm smaller so tiles fit without sanding
 - 5 mm base slab with a 0.4 mm bottom chamfer to avoid elephant's foot
-- Tallest tile is 21 mm (mountains); most are 5-17 mm
+- Tallest tiles are about 24 mm (mine, watchtower); mountains are 20-22 mm; most are 5-17 mm
 - Every tile has a perfectly flat 2 mm rim, and terrain rises smoothly from it
 - Rivers are 6 mm wide and 1 mm deep; roads are 4 mm wide and 0.5 mm raised. They cross each
   edge at the midpoint, perpendicular, with an identical profile, so
@@ -103,6 +103,26 @@ out of the pond. Their river edges are the standard river profile, so they join 
 - Water sits at river-floor level, so rivers and lakes meet seamlessly
 - Water ripples are lattice-periodic, so water tiles placed in the same orientation match exactly;
   turning one by 60 degrees leaves a seam step of at most 0.35 mm
+
+## Renders
+
+`preview.py` is a small software path tracer-lite: no GPU, no extra dependencies. It shades each part of a tile
+with a procedural material (grass, rock strata, snow above the snow line, sand, dirt road, wet banks, water with
+a shallow-to-deep colour ramp, foam and sky reflection, coursed stone, roof tiles, plaster, timber, leafy
+foliage) under a soft-shadowed sun plus sky light with ambient occlusion, then tone maps. Shadows and occlusion
+come from a voxel copy of the solid, so eaves, tree canopies and tower galleries shade what is under them.
+
+```
+python3 preview.py hero.png stl/mountains.stl --size 1200 --span 16 --el 35    # one close-up
+python3 preview.py sheet.png stl/village_2.stl stl/city_2.stl --cols 2          # a contact sheet
+python3 make_previews.py                                                          # rebuild previews/
+```
+
+Which part is which comes from `stl/<name>.mat.npz`, written next to every STL: a material tag per triangle
+(terrain, base, conifer, broadleaf, roof, plaster, wood, rock, dark openings, everything else = stone) plus the
+terrain height, road and water grids. The tags ride through the boolean operations as manifold "original ids"
+(`tag()` in `hexlib.py`), so the STL files themselves are unchanged. Without the sidecar every STL still renders,
+as plain terrain.
 
 ## Magnets
 
@@ -127,7 +147,7 @@ Pockets sit below the lowest surface at every edge, so rivers never break into t
 ## How it works
 
 1. **Heightmap.** Each tile starts as a heightfield on a 0.3 mm grid. Terrain comes from vectorised
-   gradient noise: ridged noise under a few Gaussian peaks for mountains, smoothed low-frequency noise for
+   gradient noise: domain-warped ridged noise with fine crags and sedimentary ledges under a few Gaussian peaks for mountains, smoothed low-frequency noise for
    hills, warped sawtooth ridges for dunes, tussocks and pools for swamp. A smooth mask forces the height
    to zero across the rim so neighbouring tiles always match. Water is the exception: its ripples come from
    waves on the hex reciprocal lattice, which repeat exactly from tile to tile.
@@ -137,7 +157,7 @@ Pockets sit below the lowest surface at every edge, so rivers never break into t
    around the path, roads are raised and rivers carved. Bridge and ford tiles keep rigid paths.
 3. **Solid and clipping.** The heightfield is closed into a solid and intersected with a chamfered
    hexagonal prism, then magnet pockets are cut.
-4. **Structures.** Trees (stepped conifers, lumpy broadleaves), houses with eaves, walls, towers,
+4. **Structures.** Trees (stepped conifers, lumpy broadleaves), houses with eaves, window recesses and chimneys, walls, towers,
    colonnades and stairs are built from primitives and merged with the terrain using the
    [manifold3d](https://github.com/elalish/manifold) boolean engine. Trees and buildings are placed
    by rejection sampling so they never sit on roads, rivers or each other, and stay inside the tile.
@@ -154,7 +174,8 @@ Pockets sit below the lowest surface at every edge, so rivers never break into t
 | `plate.py` | packs tiles on a hex lattice for your bed: `python3 plate.py "stl/road_*_plains.stl" --bed 256 256 --gap 3` writes `plates/plate_01.stl` and a listing |
 | `multicolour.py` | splits tiles at a height for snow caps: `python3 multicolour.py stl/mountains.stl --z 14` writes `_body` and `_cap` STLs |
 | `validate.py` | watertight, single-body and overhang report for a folder of STLs |
-| `preview.py` | software-rendered contact sheets |
+| `preview.py` | software-rendered, material-shaded previews (reads the `.mat.npz` files `generate.py` writes) |
+| `make_previews.py` | rebuilds every image in `previews/` from a folder of generated tiles |
 | `previews/` | example renders |
 
 ## Command line
@@ -188,4 +209,5 @@ there; to add a new feature, write a function in `tiles.py` and register it in `
 
 - Mirrored coasts, so both handedness of shore are available
 - Harbours on other coast shapes, and more mountain features (passes with bridges)
-- Per-tile colour splits beyond snow caps (water, roads)
+- Per-material colour splits for multi-colour printing: the material tags in `.mat.npz` already say which
+  triangles are grass, rock, water, roofs, trunks, so the exporter is a small step (`multicolour.py` only cuts at a height for now)
