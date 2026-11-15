@@ -11,24 +11,34 @@ Options: --flat 40 --no-magnets --magnet-d 3 --magnet-t 1 --out stl
 import argparse, os, sys, time, json
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hexlib import Params
+from hexlib import Params, MATERIALS
 from tiles import build_tile
 import trimesh
 
 
 def finalize(m):
     """Weld exact float32 coordinates (as a slicer does), then discard any
-    zero-volume fin shells left by boolean operations. Returns (mesh, dropped_faces)."""
+    zero-volume fin shells left by boolean operations. Returns (mesh, dropped_faces).
+    The per-face material tags (m.face_attributes['mat']) follow the surviving faces."""
     tri = m.vertices.astype(np.float32)[m.faces]
     u, inv = np.unique(tri.reshape(-1, 3), axis=0, return_inverse=True)
     w = trimesh.Trimesh(u.astype(np.float64), inv.reshape(-1, 3), process=False)
-    parts = w.split(only_watertight=False)
-    if len(parts) == 1:
-        return w, 0
-    parts.sort(key=lambda p: -len(p.faces))
-    dropped = sum(len(p.faces) for p in parts[1:])
-    assert all(abs(p.volume) < 0.5 for p in parts[1:]), 'a real floating piece was found - not a fin'
-    return parts[0], dropped
+    mat = np.asarray(m.face_attributes['mat']) if 'mat' in m.face_attributes else None
+    comps = trimesh.graph.connected_components(w.face_adjacency, nodes=np.arange(len(w.faces)), min_len=1)
+    if len(comps) > 1:
+        comps.sort(key=lambda ix: -len(ix))
+        dropped = sum(len(ix) for ix in comps[1:])
+        assert all(abs(w.submesh([ix], only_watertight=False, append=True).volume) < 0.5 for ix in comps[1:]), \
+            'a real floating piece was found - not a fin'
+        keep = np.sort(comps[0])
+        w = trimesh.Trimesh(w.vertices, w.faces[keep], process=False)
+        mat = mat[keep] if mat is not None else None
+    else:
+        dropped = 0
+    if mat is not None:
+        w.face_attributes['mat'] = mat
+    w.metadata.update(m.metadata)
+    return w, dropped
 
 
 def weld_check(m):
@@ -153,6 +163,9 @@ def main():
         m, dropped = finalize(build_tile(p=p, **cat[n]))
         path = os.path.join(a.out, n + '.stl')
         m.export(path)
+        if 'mat' in m.face_attributes:         # materials + terrain grids for preview.py (the STL is unchanged)
+            np.savez_compressed(os.path.join(a.out, n + '.mat.npz'), mat=m.face_attributes['mat'],
+                                names=np.array(MATERIALS), **m.metadata.get('grid', {}))
         ok, bodies = weld_check(m)
         ok = ok and bodies == 1
         report[n] = dict(watertight=ok, volume_mm3=round(float(m.volume), 1),

@@ -222,9 +222,29 @@ def to_manifold(mesh):
                          tri_verts=np.asarray(mesh.faces, np.uint32)))
 
 
+# material tags: a part is tagged by giving it its own manifold "original id"; the id survives every
+# boolean, so each triangle of the finished tile can be traced back to the part it came from.
+# Anything untagged (walls, towers, columns, quays ...) counts as stone.
+MATERIALS = ['stone', 'terrain', 'base', 'conifer', 'broadleaf', 'roof', 'plaster', 'wood', 'rock', 'dark']
+_TAGS = {}
+
+
+def tag(m, material):
+    m = m.as_original()
+    _TAGS[m.original_id()] = MATERIALS.index(material)
+    return m
+
+
 def to_trimesh(m):
     mm = m.to_mesh()
-    return trimesh.Trimesh(np.array(mm.vert_properties)[:, :3], np.array(mm.tri_verts), process=False)
+    t = trimesh.Trimesh(np.array(mm.vert_properties)[:, :3], np.array(mm.tri_verts), process=False)
+    runs = np.asarray(mm.run_index) // 3          # run_index counts indices, three per triangle
+    ids = np.asarray(mm.run_original_id)
+    mat = np.zeros(len(t.faces), np.uint8)
+    for k in range(len(ids)):
+        mat[runs[k]:runs[k + 1]] = _TAGS.get(int(ids[k]), 0)
+    t.face_attributes['mat'] = mat
+    return t
 
 
 def clean_mesh(t):
@@ -346,7 +366,7 @@ def conifer(rng, H, R, tiers=3):
         r = 0.0 if last else 0.3 * rk
         z = z + th
         pts.append((r, z))
-    return lathe(pts, n=11, jitter=0.10, rng=rng)
+    return tag(lathe(pts, n=11, jitter=0.10, rng=rng), 'conifer')
 
 
 def broadleaf(rng, H, R):
@@ -358,9 +378,9 @@ def broadleaf(rng, H, R):
     for ph in (25, 50, 70, 85):
         pts.append((R * np.cos(ph * DEG), zc + hh * np.sin(ph * DEG)))
     pts.append((0, zc + hh))
-    return lathe(pts, n=12, jitter=0.14, rng=rng)
+    return tag(lathe(pts, n=12, jitter=0.14, rng=rng), 'broadleaf')
 
 
 def rock(rng, x, y, z, r):
     s = Manifold.sphere(r, 8).scale([1.0, rng.uniform(0.7, 1.1), rng.uniform(0.5, 0.8)])
-    return s.rotate([0, 0, rng.uniform(0, 360)]).translate([x, y, z])
+    return tag(s.rotate([0, 0, rng.uniform(0, 360)]), 'rock').translate([x, y, z])

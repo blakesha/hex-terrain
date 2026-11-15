@@ -85,7 +85,10 @@ def t_hills(c):
 
 def t_mountains(c):
     rng = c.rng
-    r = ridged(c.X, c.Y, c.seed + 4, 4, 0.06)
+    wx = c.X + 2.4 * fbm(c.X, c.Y, c.seed + 40, 2, 0.07)                 # domain warp: ridges bend and branch
+    wy = c.Y + 2.4 * fbm(c.X + 50, c.Y - 30, c.seed + 41, 2, 0.07)
+    r = ridged(wx, wy, c.seed + 4, 5, 0.065)
+    crag = ridged(c.X, c.Y, c.seed + 6, 3, 0.22)                           # fine crags, 1-3 mm
     n = 0.5 + 0.5 * fbm(c.X, c.Y, c.seed + 5, 3, 0.1)
     env = np.zeros_like(c.X)
     for k in range(3):
@@ -95,7 +98,11 @@ def t_mountains(c):
         s = rng.uniform(6.5, 9.5)
         amp = rng.uniform(0.65, 1.0) if k else 1.0
         env = np.maximum(env, amp * np.exp(-((c.X - cx) ** 2 + (c.Y - cy) ** 2) / (2 * s * s)))
-    h = 19.0 * env * (0.30 + 0.70 * r) + 2.5 * env * n
+    h = 19.0 * env * (0.26 + 0.64 * r + 0.10 * crag) + 2.5 * env * n
+    # sedimentary ledges: gentle terracing on the steeper flanks (risers stay printable)
+    k = 1.6
+    terr = np.floor(h / k) * k + k * smoothstep((h / k) % 1.0 / 0.55)
+    h = h + 0.55 * (terr - h) * smoothstep(env * 2.0 - 0.5)
     return h, 0.0
 
 
@@ -176,8 +183,21 @@ def f_forest(c):
 # ==========================================================================
 def house(x, y, z, w, d, wh, rh, ang, pyramid=False):
     walls = box(0, 0, -1.0, w, d, wh + 1.0)
-    door = box(0, -d / 2 + 0.1, 0.1, 0.9, 0.6, 1.4)
+    door = tag(box(0, -d / 2 + 0.1, 0.1, 0.9, 0.6, 1.4), 'dark')
     walls = walls - door
+    # window recesses (0.25 mm deep, vertical, so they print without supports)
+    ww, wz = 0.62, 0.45 * wh + 0.1
+    wht = min(0.9, 0.42 * wh)
+    for side in (-1, 1):                                  # the two long walls (the door is on -y)
+        n = max(1, int(w / 1.7))
+        for k in range(n):
+            xk = (k + 0.5) / n * w - w / 2
+            if side < 0 and abs(xk) < 0.95:
+                continue
+            walls = walls - tag(box(xk, side * (d / 2 - 0.12), wz, ww, 0.5, wht), 'dark')
+    for side in (-1, 1):                                  # gable ends
+        walls = walls - tag(box(side * (w / 2 - 0.12), 0, wz, 0.5, ww, wht), 'dark')
+    walls = tag(walls, 'plaster')
     eave = 0.35
     if pyramid:
         roof = pyramid_roof(w + 2 * eave, d + 2 * eave, rh)
@@ -185,7 +205,12 @@ def house(x, y, z, w, d, wh, rh, ang, pyramid=False):
         roof = gable_roof(d, w + 2 * eave, rh, eave).rotate([0, 0, 90])
     else:
         roof = gable_roof(w, d + 2 * eave, rh, eave)
+    roof = tag(roof, 'roof')
     m = walls + roof.translate([0, 0, wh - 0.05])
+    if not pyramid and int(abs(x * 10 + y * 7)) % 3 != 0:       # chimney through the ridge
+        cx = (0.27 if w >= d else 0.0) * w
+        cy = (0.0 if w >= d else 0.27) * d
+        m = m + box(cx, cy, wh - 0.1, 0.5, 0.5, rh + 0.75)
     return m.rotate([0, 0, ang]).translate([x, y, z])
 
 
@@ -229,7 +254,7 @@ def f_village(c):
 # ==========================================================================
 def tower(x, y, z, r, h, roof_h, zlow=None):
     zb = z - 0.5 if zlow is None else zlow
-    return cyl(x, y, zb, r, z + h - zb, seg=14) + cyl(x, y, z + h - 0.05, r + 0.3, roof_h + 0.05, r2=0.05, seg=14)
+    return cyl(x, y, zb, r, z + h - zb, seg=14) + tag(cyl(x, y, z + h - 0.05, r + 0.3, roof_h + 0.05, r2=0.05, seg=14), 'roof')
 
 
 def wall_ring(inner_a, thick, height, gates, gate_w=5.0, z0=0.0):
@@ -263,8 +288,8 @@ def f_city(c):
         x, y = rad * np.cos(ang), rad * np.sin(ang)
         if c.free(x, y, 3.6):
             a0 = np.degrees(ang) + 90
-            nave = box(0, 0, -1.0, 7.0, 3.4, 5.0) + gable_roof(3.4, 7.8, 2.0, 0.4).rotate([0, 0, 90]).translate([0, 0, 4.0 - 0.05])
-            spire = box(-3.0, 0, -1.0, 2.2, 2.2, 9.0) + pyramid_roof(3.0, 3.0, 3.6).translate([-3.0, 0, 8.0 - 0.05])
+            nave = box(0, 0, -1.0, 7.0, 3.4, 5.0) + tag(gable_roof(3.4, 7.8, 2.0, 0.4), 'roof').rotate([0, 0, 90]).translate([0, 0, 4.0 - 0.05])
+            spire = box(-3.0, 0, -1.0, 2.2, 2.2, 9.0) + tag(pyramid_roof(3.0, 3.0, 3.6), 'roof').translate([-3.0, 0, 8.0 - 0.05])
             parts.append((nave + spire).rotate([0, 0, a0]).translate([x, y, c.ground(x, y)]))
             c.claim(x, y, 4.2)
             break
@@ -315,7 +340,7 @@ def f_fort(c):
     for (x, y) in corners:
         parts.append(tower(x, y, z, 2.0, 7.5, 3.0, zlow=zl))
     keep = box(-2.0, 0, z - 1, 6.0, 6.0, 9.0) + box(-2.0, 0, z + 8.0, 6.6, 6.6, 0.0 + 0.5) \
-        + pyramid_roof(6.0, 6.0, 3.2).translate([-2.0, 0, z + 8.5 - 0.05])
+        + tag(pyramid_roof(6.0, 6.0, 3.2), 'roof').translate([-2.0, 0, z + 8.5 - 0.05])
     parts.append(keep)
     parts += [tower(-4.4, 2.6, z, 1.0, 11.2, 1.8)]
     parts += scatter_trees(c, 5, p_conifer=0.4, rmin=1.4, rmax=2.2, area=17.5)
@@ -355,7 +380,7 @@ def f_ziggurat(c):
     for i, s in enumerate(sizes):
         parts.append(box(0, 0, z - 1, s, s, (i + 1) * th))
     top = z - 1 + 4 * th
-    parts.append(box(0, 0, top, 3.0, 3.0, 1.8) + gable_roof(3.0, 3.6, 1.2, 0.3).translate([0, 0, top + 1.8 - 0.05]))
+    parts.append(box(0, 0, top, 3.0, 3.0, 1.8) + tag(gable_roof(3.0, 3.6, 1.2, 0.3), 'roof').translate([0, 0, top + 1.8 - 0.05]))
     n, st = 16, 0.55
     pts = [(12.0, 0.0)]
     for k in range(n):
@@ -421,8 +446,8 @@ def harbour_axis(c):
 
 def boat(rng, x, y, z, ang):
     hull = np.array([[-2.0, -0.7], [1.0, -0.85], [2.4, 0.0], [1.0, 0.85], [-2.0, 0.7]])
-    m = Manifold.extrude(CrossSection([hull]), 1.3).translate([0, 0, z])
-    m = m + box(-0.7, 0, z + 1.25, 1.5, 1.0, 0.75)
+    m = tag(Manifold.extrude(CrossSection([hull]), 1.3), 'wood').translate([0, 0, z])
+    m = m + tag(box(-0.7, 0, z + 1.25, 1.5, 1.0, 0.75), 'wood')
     return m.rotate([0, 0, ang]).translate([x, y, 0])
 
 
@@ -460,7 +485,7 @@ def f_lighthouse(c):
     parts.append(Manifold.extrude(CrossSection([np.array([[np.cos(a) * 1.7, np.sin(a) * 1.7] for a in np.linspace(0, 2 * np.pi, 20, endpoint=False)])]),
                                   0.9, 0, 0.0, (1.35, 1.35)).translate([0, 0, z + 9.9]))     # chamfered gallery
     parts.append(cyl(0, 0, z + 10.7, 1.0, 1.7, seg=16))                                      # lamp room
-    parts.append(cyl(0, 0, z + 12.35, 1.35, 1.5, r2=0.05, seg=16))                           # cap
+    parts.append(tag(cyl(0, 0, z + 12.35, 1.35, 1.5, r2=0.05, seg=16), 'roof'))                           # cap
     parts.append(house(3.8, 2.4, c.ground(3.8, 2.4), 3.0, 2.4, 1.9, 1.4, 25.0))              # keeper's cottage
     c.claim(0, 0, 3.0); c.claim(3.8, 2.4, 2.6)
     return parts
@@ -537,11 +562,11 @@ def f_mine(c):
     w, hsq = 3.4, 3.0
     c.carve = box(XF - 2.5, 0, floor, 9.5, w, hsq)                  # square adit into the hill
     for s in (-1, 1):                                              # timber frame
-        parts.append(box(xf, s * (w / 2 + 0.25), zl, 0.9, 0.9, floor + hsq + 0.3 - zl))
-    parts.append(box(xf, 0, floor + hsq, 0.9, w + 1.4, 0.8))
+        parts.append(tag(box(xf, s * (w / 2 + 0.25), zl, 0.9, 0.9, floor + hsq + 0.3 - zl), 'wood'))
+    parts.append(tag(box(xf, 0, floor + hsq, 0.9, w + 1.4, 0.8), 'wood'))
     for k in range(3):                                             # braces along the tunnel roof
-        parts.append(box(xf - 1.6 - 1.7 * k, 0, floor + hsq - 0.5, 0.6, w + 0.2, 0.5))
-    parts.append(box(xf + 2.2, 0.15, floor - 0.1, 1.4, 0.95, 0.65))                       # ore cart
+        parts.append(tag(box(xf - 1.6 - 1.7 * k, 0, floor + hsq - 0.5, 0.6, w + 0.2, 0.5), 'wood'))
+    parts.append(tag(box(xf + 2.2, 0.15, floor - 0.1, 1.4, 0.95, 0.65), 'wood'))                       # ore cart
     parts.append(cyl(xf + 2.2 - 0.45, 0.15 - 0.55, floor - 0.1, 0.32, 0.12, seg=10))
     parts.append(cyl(xf + 2.2 + 0.45, 0.15 + 0.55, floor - 0.1, 0.32, 0.12, seg=10))
     for _ in range(8):                                             # spoil heap
@@ -621,7 +646,7 @@ def f_watchtower(c):
     for sx in (-2.3, 2.3):
         for sy in (-2.3, 2.3):
             parts.append(box(sx, sy, z + 10.2, 0.7, 0.7, 2.3))                     # roof posts
-    parts.append(pyramid_roof(6.2, 6.2, 1.9).translate([0, 0, z + 12.45]))
+    parts.append(tag(pyramid_roof(6.2, 6.2, 1.9), 'roof').translate([0, 0, z + 12.45]))
     ring = cyl(0, 0, zl, 9.0, z + 1.6 - zl, seg=48) - cyl(0, 0, zl - 1, 8.1, z + 6, seg=48)
     ring = ring - box(8.55, 0, zl - 1, 2.6, 3.2, 20)                               # gate
     parts.append(ring)
@@ -670,7 +695,7 @@ def bridge_parts(c, road_ang_deg):
     L = 14.0
     deck = box(0, 0, top - 0.8, L, p.road_w, 0.8)
     rail = box(0, p.road_w / 2 - 0.3, top, L, 0.6, 0.7) + box(0, -p.road_w / 2 + 0.3, top, L, 0.6, 0.7)
-    return [(deck + rail).rotate([0, 0, road_ang_deg]).translate([q[0], q[1], 0])]
+    return [tag(deck + rail, 'wood').rotate([0, 0, road_ang_deg]).translate([q[0], q[1], 0])]
 
 
 # ==========================================================================
@@ -871,14 +896,15 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         bw = {'cliff': 0.9, 'sand': 3.6}.get(style, 2.6)
         Z = apply_water(c, Z, land_edges, bw)
     c.Z = Z
+    rm_grid = np.asarray(rm * (1.0 if np.ndim(rm) else 0.0) * np.ones_like(Z), np.float32)
 
     # --- solid ------------------------------------------------------------
-    solid = heightfield_solid(c.xs, c.ys, Z)
+    solid = tag(heightfield_solid(c.xs, c.ys, Z), 'terrain')
     ch = p.chamfer
     def ring(a, z):
         R = a / np.cos(30 * DEG)
         return [[R * np.cos((30 + 60 * k) * DEG), R * np.sin((30 + 60 * k) * DEG), z] for k in range(6)]
-    clip = Manifold.hull_points(np.array(ring(p.a - ch, 0.0) + ring(p.a, ch) + ring(p.a, 60.0)))   # chamfered hex prism
+    clip = tag(Manifold.hull_points(np.array(ring(p.a - ch, 0.0) + ring(p.a, ch) + ring(p.a, 60.0))), 'base')   # chamfered hex prism
     tile = solid ^ clip
 
     # --- magnet pockets ---------------------------------------------------
@@ -888,7 +914,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         offs = [0.0] if p.magnets_per_edge == 1 else [-p.magnet_pitch / 2, p.magnet_pitch / 2]
         for i in range(6):
             for off in offs:
-                pk = Manifold.cylinder(depth + 1.0, r, r, 32).rotate([0, 90, 0]) \
+                pk = tag(Manifold.cylinder(depth + 1.0, r, r, 32), 'base').rotate([0, 90, 0]) \
                     .translate([p.a - depth, off, 1.9]).rotate([0, 0, 60 * i])
                 tile = tile - pk
 
@@ -904,7 +930,7 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
         parts += bridge_parts(c, 60.0 * river_cross_edge(road))
     if parts:
         feat = union(parts)
-        feat = feat ^ hex_prism(p.a - 0.05, 80.0, 0.5)       # nothing may poke past the tile edge
+        feat = feat ^ tag(hex_prism(p.a - 0.05, 80.0, 0.5), 'base')       # nothing may poke past the tile edge
         if feature in ('dungeon', 'mine') and getattr(c, 'carve', None) is not None:
             feat = feat - c.carve
         tile = tile + feat
@@ -913,7 +939,15 @@ def build_tile(terrain='plains', road=None, river=None, feature=None, seed=0,
     if len(comps) > 1:                 # drop dust / zero-volume slivers left by boolean ops
         keep = [m for m in comps if m.volume() > 1.0]
         tile = union(keep)
-    return to_trimesh(tile)
+    out = to_trimesh(tile)
+    out.metadata['grid'] = dict(xs=c.xs.astype(np.float32), ys=c.ys.astype(np.float32),
+                                Z=Z.astype(np.float32), road=rm_grid, ground=GROUND.get(terrain, 'grass'),
+                                water=bool(water) or terrain == 'water' or river is not None)
+    return out
+
+
+GROUND = {'desert': 'sand', 'swamp': 'swamp', 'forest': 'forest', 'hills': 'hills', 'mountains': 'mountain',
+          'plains': 'grass', 'water': 'grass'}
 
 
 def river_cross_edge(road):
